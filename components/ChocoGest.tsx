@@ -53,6 +53,43 @@ function registrarMovimento(
   return [...movimentos, { ...mov, id: nextId(movimentos) }];
 }
 
+function compraItensParaPatrimonio(
+  itens: ItemMovimentacao[],
+  patrimonio: PatrimonioItem[],
+  dataAquisicao: string,
+  fornecedor: string,
+  compraId: number
+): PatrimonioItem[] {
+  const equipamentos = itens.filter((i) => i.tipo === 'Equipamento');
+  if (equipamentos.length === 0) return [];
+
+  let nextPatrimonioId = nextId(patrimonio);
+  const novos: PatrimonioItem[] = [];
+
+  for (const item of equipamentos) {
+    const valorTotal = item.quantidade * item.valorUnit;
+    if (!item.nome.trim() || valorTotal <= 0) continue;
+
+    const nome =
+      item.quantidade > 1
+        ? `${item.nome} (${item.quantidade} ${item.unidade})`
+        : item.nome;
+
+    novos.push({
+      id: nextPatrimonioId++,
+      nome,
+      categoria: 'Equipamento',
+      dataAquisicao,
+      valorAquisicao: valorTotal,
+      valorAtual: valorTotal,
+      depreciacaoAnual: 10,
+      observacoes: `Compra #${compraId} — ${fornecedor}`,
+    });
+  }
+
+  return novos;
+}
+
 function atualizarEstoqueCompra(estoque: EstoqueItem[], itens: ItemMovimentacao[]): EstoqueItem[] {
   const updated = [...estoque];
   for (const item of itens) {
@@ -341,18 +378,34 @@ export default function ChocoGest() {
         });
       }
 
+      const itensEstoque = compra.itens.filter((i) => i.tipo !== 'Equipamento');
+      const novosPatrimonio = compraItensParaPatrimonio(
+        compra.itens,
+        prev.patrimonio,
+        dataOperacao,
+        compra.fornecedor,
+        compra.id
+      );
+
       return {
         ...prev,
         compras: [...prev.compras, compra],
-        estoque: atualizarEstoqueCompra(prev.estoque, compra.itens),
+        estoque: atualizarEstoqueCompra(prev.estoque, itensEstoque),
+        patrimonio: [...prev.patrimonio, ...novosPatrimonio],
         movimentosCaixa: movCaixa,
         movimentosBanco: movBanco,
       };
     });
 
+    const qtdEquipamento = itens.filter((i) => i.tipo === 'Equipamento').length;
+
     setNovaCompra({ data: todayISO(), fornecedor: '', formaPagamento: 'Cartao', cartaoId: 1, parcelas: 1, itens: [] });
     setItemCompra({ nome: '', tipo: 'MateriaPrima', quantidade: 1, unidade: 'kg', valorUnit: 0 });
-    alert('Compra registrada com sucesso!');
+    alert(
+      qtdEquipamento > 0
+        ? `Compra registrada! ${qtdEquipamento} equipamento(s) adicionado(s) ao Patrimônio.`
+        : 'Compra registrada com sucesso!'
+    );
   };
 
   const adicionarItemVenda = () => {
@@ -499,7 +552,14 @@ export default function ChocoGest() {
   };
 
   const adicionarPatrimonio = () => {
-    if (!novoPatrimonio.nome.trim()) return;
+    if (!novoPatrimonio.nome.trim()) {
+      return alert('Informe o nome do bem patrimonial.');
+    }
+    const valorAquisicao = Number(novoPatrimonio.valorAquisicao) || 0;
+    const valorAtual = Number(novoPatrimonio.valorAtual) || valorAquisicao;
+    if (valorAquisicao <= 0 && valorAtual <= 0) {
+      return alert('Informe o valor de aquisição ou o valor atual.');
+    }
     update((prev) => ({
       ...prev,
       patrimonio: [
@@ -507,7 +567,8 @@ export default function ChocoGest() {
         {
           id: nextId(prev.patrimonio),
           ...novoPatrimonio,
-          valorAtual: novoPatrimonio.valorAtual || novoPatrimonio.valorAquisicao,
+          valorAquisicao: valorAquisicao || valorAtual,
+          valorAtual,
         },
       ],
     }));
@@ -807,6 +868,7 @@ export default function ChocoGest() {
                 <h4 className="text-amber-200 mb-1">Itens da compra</h4>
                 <p className="text-amber-400/70 text-xs mb-2">
                   Preencha os campos abaixo. Use &quot;+ Item&quot; para adicionar vários, ou &quot;Registrar Compra&quot; para incluir o item atual automaticamente.
+                  Itens do tipo <strong>Equipamento</strong> vão para o Patrimônio (não para o Estoque).
                 </p>
                 <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-3">
                   <input placeholder="Nome" className={inputCls} value={itemCompra.nome} onChange={(e) => setItemCompra({ ...itemCompra, nome: e.target.value })} />
@@ -1157,8 +1219,26 @@ export default function ChocoGest() {
                     </select>
                   </Field>
                   <Field label="Data de Aquisição"><input type="date" className={inputCls} value={novoPatrimonio.dataAquisicao} onChange={(e) => setNovoPatrimonio({ ...novoPatrimonio, dataAquisicao: e.target.value })} /></Field>
-                  <Field label="Valor de Aquisição (R$)"><input type="number" step="0.01" className={inputCls} value={novoPatrimonio.valorAquisicao} onChange={(e) => setNovoPatrimonio({ ...novoPatrimonio, valorAquisicao: +e.target.value })} /></Field>
-                  <Field label="Valor Atual (R$)"><input type="number" step="0.01" className={inputCls} value={novoPatrimonio.valorAtual} onChange={(e) => setNovoPatrimonio({ ...novoPatrimonio, valorAtual: +e.target.value })} /></Field>
+                  <Field label="Valor de Aquisição (R$)">
+                    <input
+                      type="number"
+                      step="0.01"
+                      min={0}
+                      className={inputCls}
+                      value={novoPatrimonio.valorAquisicao || ''}
+                      onChange={(e) => {
+                        const valor = +e.target.value;
+                        setNovoPatrimonio((p) => ({
+                          ...p,
+                          valorAquisicao: valor,
+                          valorAtual: p.valorAtual > 0 ? p.valorAtual : valor,
+                        }));
+                      }}
+                    />
+                  </Field>
+                  <Field label="Valor Atual (R$)">
+                    <input type="number" step="0.01" min={0} className={inputCls} value={novoPatrimonio.valorAtual || ''} onChange={(e) => setNovoPatrimonio((p) => ({ ...p, valorAtual: +e.target.value }))} />
+                  </Field>
                   <Field label="Depreciação Anual (%)"><input type="number" className={inputCls} value={novoPatrimonio.depreciacaoAnual} onChange={(e) => setNovoPatrimonio({ ...novoPatrimonio, depreciacaoAnual: +e.target.value })} /></Field>
                 </div>
                 <Field label="Observações">
