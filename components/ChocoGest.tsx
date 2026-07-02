@@ -146,6 +146,14 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
+function DateField({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+  return (
+    <Field label={label}>
+      <input type="date" className={inputCls} value={value} onChange={(e) => onChange(e.target.value)} />
+    </Field>
+  );
+}
+
 const inputCls =
   'w-full bg-[#2c2118] border border-amber-700/60 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-amber-500';
 
@@ -167,8 +175,10 @@ export default function ChocoGest() {
     quantidade: 0,
     unidade: 'kg',
     valorUnit: 0,
+    data: todayISO(),
   });
   const [novaCompra, setNovaCompra] = useState({
+    data: todayISO(),
     fornecedor: '',
     formaPagamento: 'Cartao',
     cartaoId: 1,
@@ -183,6 +193,7 @@ export default function ChocoGest() {
     valorUnit: 0,
   });
   const [novaVenda, setNovaVenda] = useState({
+    data: todayISO(),
     cliente: '',
     formaPagamento: 'Dinheiro',
     itens: [] as ItemMovimentacao[],
@@ -193,6 +204,7 @@ export default function ChocoGest() {
     valorUnit: 0,
   });
   const [novaProducao, setNovaProducao] = useState({
+    data: todayISO(),
     lote: '',
     produto: '',
     quantidade: 1,
@@ -211,12 +223,14 @@ export default function ChocoGest() {
     observacoes: '',
   });
   const [movCaixa, setMovCaixa] = useState({
+    data: todayISO(),
     descricao: '',
     tipo: 'entrada' as 'entrada' | 'saida',
     valor: 0,
     categoria: 'Operacional',
   });
   const [movBanco, setMovBanco] = useState({
+    data: todayISO(),
     descricao: '',
     tipo: 'entrada' as 'entrada' | 'saida',
     valor: 0,
@@ -246,10 +260,10 @@ export default function ChocoGest() {
       ...prev,
       estoque: [
         ...prev.estoque,
-        { id: nextId(prev.estoque), ...novoItem, data: todayISO() },
+        { id: nextId(prev.estoque), ...novoItem, data: novoItem.data || todayISO() },
       ],
     }));
-    setNovoItem({ nome: '', tipo: 'MateriaPrima', quantidade: 0, unidade: 'kg', valorUnit: 0 });
+    setNovoItem({ nome: '', tipo: 'MateriaPrima', quantidade: 0, unidade: 'kg', valorUnit: 0, data: todayISO() });
   };
 
   const removerItemEstoque = (id: number) => {
@@ -290,9 +304,10 @@ export default function ChocoGest() {
 
     const total = sumBy(itens, (i) => i.quantidade * i.valorUnit);
     const cartao = data.cartoes.find((c) => c.id === novaCompra.cartaoId);
+    const dataOperacao = novaCompra.data || todayISO();
     const compra: Compra = {
       id: nextId(data.compras),
-      data: todayISO(),
+      data: dataOperacao,
       fornecedor,
       formaPagamento: novaCompra.formaPagamento,
       cartao: novaCompra.formaPagamento === 'Cartao' ? (cartao?.nome ?? null) : null,
@@ -308,7 +323,7 @@ export default function ChocoGest() {
 
       if (compra.formaPagamento === 'Dinheiro') {
         movCaixa = registrarMovimento(movCaixa, {
-          data: todayISO(),
+          data: dataOperacao,
           descricao: desc,
           tipo: 'saida',
           valor: total,
@@ -317,7 +332,7 @@ export default function ChocoGest() {
         });
       } else if (compra.formaPagamento === 'Pix' || compra.formaPagamento === 'Transferencia') {
         movBanco = registrarMovimento(movBanco, {
-          data: todayISO(),
+          data: dataOperacao,
           descricao: desc,
           tipo: 'saida',
           valor: total,
@@ -335,7 +350,7 @@ export default function ChocoGest() {
       };
     });
 
-    setNovaCompra({ fornecedor: '', formaPagamento: 'Cartao', cartaoId: 1, parcelas: 1, itens: [] });
+    setNovaCompra({ data: todayISO(), fornecedor: '', formaPagamento: 'Cartao', cartaoId: 1, parcelas: 1, itens: [] });
     setItemCompra({ nome: '', tipo: 'MateriaPrima', quantidade: 1, unidade: 'kg', valorUnit: 0 });
     alert('Compra registrada com sucesso!');
   };
@@ -360,9 +375,10 @@ export default function ChocoGest() {
       return alert('Preencha cliente e adicione itens.');
     }
     const total = sumBy(novaVenda.itens, (i) => i.quantidade * i.valorUnit);
+    const dataOperacao = novaVenda.data || todayISO();
     const venda: Venda = {
       id: nextId(data.vendas),
-      data: todayISO(),
+      data: dataOperacao,
       cliente: novaVenda.cliente,
       formaPagamento: novaVenda.formaPagamento,
       total,
@@ -376,7 +392,7 @@ export default function ChocoGest() {
 
       if (venda.formaPagamento === 'Dinheiro') {
         movCaixa = registrarMovimento(movCaixa, {
-          data: todayISO(),
+          data: dataOperacao,
           descricao: desc,
           tipo: 'entrada',
           valor: total,
@@ -385,7 +401,7 @@ export default function ChocoGest() {
         });
       } else {
         movBanco = registrarMovimento(movBanco, {
-          data: todayISO(),
+          data: dataOperacao,
           descricao: desc,
           tipo: 'entrada',
           valor: total,
@@ -403,7 +419,7 @@ export default function ChocoGest() {
       };
     });
 
-    setNovaVenda({ cliente: '', formaPagamento: 'Dinheiro', itens: [] });
+    setNovaVenda({ data: todayISO(), cliente: '', formaPagamento: 'Dinheiro', itens: [] });
     alert('Venda registrada com sucesso!');
   };
 
@@ -426,7 +442,7 @@ export default function ChocoGest() {
     );
     const producao: Producao = {
       id: nextId(data.producoes),
-      data: todayISO(),
+      data: novaProducao.data || todayISO(),
       lote: novaProducao.lote || `L${Date.now()}`,
       produto: novaProducao.produto,
       quantidade: novaProducao.quantidade,
@@ -464,7 +480,7 @@ export default function ChocoGest() {
       return { ...prev, producoes: [...prev.producoes, producao], estoque };
     });
 
-    setNovaProducao({ lote: '', produto: '', quantidade: 1, unidade: 'un', ingredientes: [] });
+    setNovaProducao({ data: todayISO(), lote: '', produto: '', quantidade: 1, unidade: 'un', ingredientes: [] });
     alert('Produção registrada!');
   };
 
@@ -515,18 +531,18 @@ export default function ChocoGest() {
     if (!movCaixa.descricao.trim() || movCaixa.valor <= 0) return alert('Preencha descrição e valor.');
     update((prev) => ({
       ...prev,
-      movimentosCaixa: registrarMovimento(prev.movimentosCaixa, { ...movCaixa, data: todayISO() }),
+      movimentosCaixa: registrarMovimento(prev.movimentosCaixa, { ...movCaixa, data: movCaixa.data || todayISO() }),
     }));
-    setMovCaixa({ descricao: '', tipo: 'entrada', valor: 0, categoria: 'Operacional' });
+    setMovCaixa({ data: todayISO(), descricao: '', tipo: 'entrada', valor: 0, categoria: 'Operacional' });
   };
 
   const registrarMovBanco = () => {
     if (!movBanco.descricao.trim() || movBanco.valor <= 0) return alert('Preencha descrição e valor.');
     update((prev) => ({
       ...prev,
-      movimentosBanco: registrarMovimento(prev.movimentosBanco, { ...movBanco, data: todayISO() }),
+      movimentosBanco: registrarMovimento(prev.movimentosBanco, { ...movBanco, data: movBanco.data || todayISO() }),
     }));
-    setMovBanco({ descricao: '', tipo: 'entrada', valor: 0, categoria: 'Operacional' });
+    setMovBanco({ data: todayISO(), descricao: '', tipo: 'entrada', valor: 0, categoria: 'Operacional' });
   };
 
   const handleImportBackup = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -651,7 +667,7 @@ export default function ChocoGest() {
                   <h3 className="font-semibold text-amber-200 mb-3">Últimas Vendas</h3>
                   {data.vendas.slice(-5).reverse().map((v) => (
                     <div key={v.id} className="flex justify-between py-2 border-b border-amber-800/30 text-sm">
-                      <span>{v.cliente}</span>
+                      <span>{formatDate(v.data)} — {v.cliente}</span>
                       <span className="text-amber-300">{formatCurrency(v.total)}</span>
                     </div>
                   ))}
@@ -661,7 +677,7 @@ export default function ChocoGest() {
                   <h3 className="font-semibold text-amber-200 mb-3">Últimas Produções</h3>
                   {data.producoes.slice(-5).reverse().map((p) => (
                     <div key={p.id} className="flex justify-between py-2 border-b border-amber-800/30 text-sm">
-                      <span>{p.produto} ({p.lote})</span>
+                      <span>{formatDate(p.data)} — {p.produto} ({p.lote})</span>
                       <span className="text-amber-300">{formatCurrency(p.custoEstimado)}</span>
                     </div>
                   ))}
@@ -680,22 +696,27 @@ export default function ChocoGest() {
               <Card className="mb-6">
                 <h3 className="font-semibold mb-4 text-amber-200">Novo Item</h3>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                  <DateField
+                    label="Data da operação"
+                    value={novoItem.data}
+                    onChange={(data) => setNovoItem((p) => ({ ...p, data }))}
+                  />
                   <Field label="Nome">
-                    <input className={inputCls} value={novoItem.nome} onChange={(e) => setNovoItem({ ...novoItem, nome: e.target.value })} />
+                    <input className={inputCls} value={novoItem.nome} onChange={(e) => setNovoItem((p) => ({ ...p, nome: e.target.value }))} />
                   </Field>
                   <Field label="Tipo">
-                    <select className={inputCls} value={novoItem.tipo} onChange={(e) => setNovoItem({ ...novoItem, tipo: e.target.value as TipoItem })}>
+                    <select className={inputCls} value={novoItem.tipo} onChange={(e) => setNovoItem((p) => ({ ...p, tipo: e.target.value as TipoItem }))}>
                       {TIPOS_ITEM.map((t) => <option key={t} value={t}>{t}</option>)}
                     </select>
                   </Field>
                   <Field label="Quantidade">
-                    <input type="number" className={inputCls} value={novoItem.quantidade} onChange={(e) => setNovoItem({ ...novoItem, quantidade: +e.target.value })} />
+                    <input type="number" className={inputCls} value={novoItem.quantidade} onChange={(e) => setNovoItem((p) => ({ ...p, quantidade: +e.target.value }))} />
                   </Field>
                   <Field label="Unidade">
-                    <input className={inputCls} value={novoItem.unidade} onChange={(e) => setNovoItem({ ...novoItem, unidade: e.target.value })} />
+                    <input className={inputCls} value={novoItem.unidade} onChange={(e) => setNovoItem((p) => ({ ...p, unidade: e.target.value }))} />
                   </Field>
                   <Field label="Valor Unitário (R$)">
-                    <input type="number" step="0.01" className={inputCls} value={novoItem.valorUnit} onChange={(e) => setNovoItem({ ...novoItem, valorUnit: +e.target.value })} />
+                    <input type="number" step="0.01" className={inputCls} value={novoItem.valorUnit} onChange={(e) => setNovoItem((p) => ({ ...p, valorUnit: +e.target.value }))} />
                   </Field>
                 </div>
                 <Btn className="mt-4" onClick={adicionarItemEstoque}>Adicionar ao Estoque</Btn>
@@ -705,6 +726,7 @@ export default function ChocoGest() {
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="text-amber-300 border-b border-amber-700">
+                        <th className="text-left py-2">Data</th>
                         <th className="text-left py-2">Nome</th>
                         <th className="text-left py-2">Tipo</th>
                         <th className="text-right py-2">Qtd</th>
@@ -716,6 +738,7 @@ export default function ChocoGest() {
                     <tbody>
                       {data.estoque.map((item) => (
                         <tr key={item.id} className="border-b border-amber-800/30">
+                          <td className="py-2 text-amber-300">{formatDate(item.data ?? '')}</td>
                           <td className="py-2">{item.nome}</td>
                           <td className="py-2 text-amber-300">{item.tipo}</td>
                           <td className="py-2 text-right">{item.quantidade} {item.unidade}</td>
@@ -729,7 +752,7 @@ export default function ChocoGest() {
                     </tbody>
                     <tfoot>
                       <tr className="font-bold text-amber-100">
-                        <td colSpan={4} className="py-3 text-right">Total Geral:</td>
+                        <td colSpan={5} className="py-3 text-right">Total Geral:</td>
                         <td className="py-3 text-right">{formatCurrency(valorEstoque)}</td>
                         <td></td>
                       </tr>
@@ -746,7 +769,12 @@ export default function ChocoGest() {
             <div>
               <SectionTitle action={<Btn variant="secondary" onClick={() => gerarPdfCompras(data)}>📄 PDF</Btn>}>Compras</SectionTitle>
               <Card className="mb-6">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-4">
+                  <DateField
+                    label="Data da compra"
+                    value={novaCompra.data}
+                    onChange={(data) => setNovaCompra((p) => ({ ...p, data }))}
+                  />
                   <Field label="Fornecedor">
                     <input
                       className={inputCls}
@@ -829,12 +857,17 @@ export default function ChocoGest() {
             <div>
               <SectionTitle action={<Btn variant="secondary" onClick={() => gerarPdfVendas(data)}>📄 PDF</Btn>}>Vendas</SectionTitle>
               <Card className="mb-6">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-4">
+                  <DateField
+                    label="Data da venda"
+                    value={novaVenda.data}
+                    onChange={(data) => setNovaVenda((p) => ({ ...p, data }))}
+                  />
                   <Field label="Cliente">
-                    <input className={inputCls} value={novaVenda.cliente} onChange={(e) => setNovaVenda({ ...novaVenda, cliente: e.target.value })} />
+                    <input className={inputCls} value={novaVenda.cliente} onChange={(e) => setNovaVenda((p) => ({ ...p, cliente: e.target.value }))} />
                   </Field>
                   <Field label="Pagamento">
-                    <select className={inputCls} value={novaVenda.formaPagamento} onChange={(e) => setNovaVenda({ ...novaVenda, formaPagamento: e.target.value })}>
+                    <select className={inputCls} value={novaVenda.formaPagamento} onChange={(e) => setNovaVenda((p) => ({ ...p, formaPagamento: e.target.value }))}>
                       <option>Dinheiro</option><option>Pix</option><option>Cartao</option><option>Transferencia</option>
                     </select>
                   </Field>
@@ -887,10 +920,15 @@ export default function ChocoGest() {
               <SectionTitle>Produção</SectionTitle>
               <Card className="mb-6">
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
-                  <Field label="Lote"><input className={inputCls} value={novaProducao.lote} onChange={(e) => setNovaProducao({ ...novaProducao, lote: e.target.value })} /></Field>
-                  <Field label="Produto"><input className={inputCls} value={novaProducao.produto} onChange={(e) => setNovaProducao({ ...novaProducao, produto: e.target.value })} /></Field>
-                  <Field label="Quantidade"><input type="number" className={inputCls} value={novaProducao.quantidade} onChange={(e) => setNovaProducao({ ...novaProducao, quantidade: +e.target.value })} /></Field>
-                  <Field label="Unidade"><input className={inputCls} value={novaProducao.unidade} onChange={(e) => setNovaProducao({ ...novaProducao, unidade: e.target.value })} /></Field>
+                  <DateField
+                    label="Data da produção"
+                    value={novaProducao.data}
+                    onChange={(data) => setNovaProducao((p) => ({ ...p, data }))}
+                  />
+                  <Field label="Lote"><input className={inputCls} value={novaProducao.lote} onChange={(e) => setNovaProducao((p) => ({ ...p, lote: e.target.value }))} /></Field>
+                  <Field label="Produto"><input className={inputCls} value={novaProducao.produto} onChange={(e) => setNovaProducao((p) => ({ ...p, produto: e.target.value }))} /></Field>
+                  <Field label="Quantidade"><input type="number" className={inputCls} value={novaProducao.quantidade} onChange={(e) => setNovaProducao((p) => ({ ...p, quantidade: +e.target.value }))} /></Field>
+                  <Field label="Unidade"><input className={inputCls} value={novaProducao.unidade} onChange={(e) => setNovaProducao((p) => ({ ...p, unidade: e.target.value }))} /></Field>
                 </div>
                 <h4 className="text-amber-200 mb-2">Ingredientes</h4>
                 <div className="grid grid-cols-3 gap-3 mb-3">
@@ -1017,15 +1055,20 @@ export default function ChocoGest() {
                 Caixa — Saldo: {formatCurrency(saldoCaixa)}
               </SectionTitle>
               <Card className="mb-6">
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                  <Field label="Descrição"><input className={inputCls} value={movCaixa.descricao} onChange={(e) => setMovCaixa({ ...movCaixa, descricao: e.target.value })} /></Field>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+                  <DateField
+                    label="Data do movimento"
+                    value={movCaixa.data}
+                    onChange={(data) => setMovCaixa((p) => ({ ...p, data }))}
+                  />
+                  <Field label="Descrição"><input className={inputCls} value={movCaixa.descricao} onChange={(e) => setMovCaixa((p) => ({ ...p, descricao: e.target.value }))} /></Field>
                   <Field label="Tipo">
-                    <select className={inputCls} value={movCaixa.tipo} onChange={(e) => setMovCaixa({ ...movCaixa, tipo: e.target.value as 'entrada' | 'saida' })}>
+                    <select className={inputCls} value={movCaixa.tipo} onChange={(e) => setMovCaixa((p) => ({ ...p, tipo: e.target.value as 'entrada' | 'saida' }))}>
                       <option value="entrada">Entrada</option><option value="saida">Saída</option>
                     </select>
                   </Field>
-                  <Field label="Valor (R$)"><input type="number" step="0.01" className={inputCls} value={movCaixa.valor} onChange={(e) => setMovCaixa({ ...movCaixa, valor: +e.target.value })} /></Field>
-                  <Field label="Categoria"><input className={inputCls} value={movCaixa.categoria} onChange={(e) => setMovCaixa({ ...movCaixa, categoria: e.target.value })} /></Field>
+                  <Field label="Valor (R$)"><input type="number" step="0.01" className={inputCls} value={movCaixa.valor} onChange={(e) => setMovCaixa((p) => ({ ...p, valor: +e.target.value }))} /></Field>
+                  <Field label="Categoria"><input className={inputCls} value={movCaixa.categoria} onChange={(e) => setMovCaixa((p) => ({ ...p, categoria: e.target.value }))} /></Field>
                 </div>
                 <Btn className="mt-4" onClick={registrarMovCaixa}>Registrar Movimento</Btn>
               </Card>
@@ -1059,15 +1102,20 @@ export default function ChocoGest() {
                 Banco — Saldo: {formatCurrency(saldoBanco)}
               </SectionTitle>
               <Card className="mb-6">
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                  <Field label="Descrição"><input className={inputCls} value={movBanco.descricao} onChange={(e) => setMovBanco({ ...movBanco, descricao: e.target.value })} /></Field>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+                  <DateField
+                    label="Data do movimento"
+                    value={movBanco.data}
+                    onChange={(data) => setMovBanco((p) => ({ ...p, data }))}
+                  />
+                  <Field label="Descrição"><input className={inputCls} value={movBanco.descricao} onChange={(e) => setMovBanco((p) => ({ ...p, descricao: e.target.value }))} /></Field>
                   <Field label="Tipo">
-                    <select className={inputCls} value={movBanco.tipo} onChange={(e) => setMovBanco({ ...movBanco, tipo: e.target.value as 'entrada' | 'saida' })}>
+                    <select className={inputCls} value={movBanco.tipo} onChange={(e) => setMovBanco((p) => ({ ...p, tipo: e.target.value as 'entrada' | 'saida' }))}>
                       <option value="entrada">Entrada</option><option value="saida">Saída</option>
                     </select>
                   </Field>
-                  <Field label="Valor (R$)"><input type="number" step="0.01" className={inputCls} value={movBanco.valor} onChange={(e) => setMovBanco({ ...movBanco, valor: +e.target.value })} /></Field>
-                  <Field label="Categoria"><input className={inputCls} value={movBanco.categoria} onChange={(e) => setMovBanco({ ...movBanco, categoria: e.target.value })} /></Field>
+                  <Field label="Valor (R$)"><input type="number" step="0.01" className={inputCls} value={movBanco.valor} onChange={(e) => setMovBanco((p) => ({ ...p, valor: +e.target.value }))} /></Field>
+                  <Field label="Categoria"><input className={inputCls} value={movBanco.categoria} onChange={(e) => setMovBanco((p) => ({ ...p, categoria: e.target.value }))} /></Field>
                 </div>
                 <Btn className="mt-4" onClick={registrarMovBanco}>Registrar Movimento</Btn>
               </Card>

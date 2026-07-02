@@ -27,6 +27,7 @@ export function gerarPdfEstoque(data: AppData) {
   addHeader(doc, 'Relatório de Estoque');
 
   const rows = data.estoque.map((item) => [
+    formatDate(item.data ?? ''),
     item.nome,
     item.tipo,
     `${item.quantidade} ${item.unidade}`,
@@ -38,9 +39,9 @@ export function gerarPdfEstoque(data: AppData) {
 
   autoTable(doc, {
     startY: 52,
-    head: [['Item', 'Tipo', 'Quantidade', 'Valor Unit.', 'Total']],
+    head: [['Data', 'Item', 'Tipo', 'Quantidade', 'Valor Unit.', 'Total']],
     body: rows,
-    foot: [['', '', '', 'Total Geral', formatCurrency(total)]],
+    foot: [['', '', '', '', 'Total Geral', formatCurrency(total)]],
     theme: 'grid',
     headStyles: { fillColor: [180, 83, 9] },
     footStyles: { fillColor: [254, 243, 199], textColor: [60, 40, 30], fontStyle: 'bold' },
