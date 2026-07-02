@@ -300,6 +300,14 @@ const VENDA_FORM_INICIAL = {
   itens: [] as ItemMovimentacao[],
 };
 
+const MOV_CAIXA_FORM_INICIAL = {
+  data: todayISO(),
+  descricao: '',
+  tipo: 'entrada' as 'entrada' | 'saida',
+  valor: 0,
+  categoria: 'Operacional',
+};
+
 const MOV_BANCO_FORM_INICIAL = {
   data: todayISO(),
   descricao: '',
@@ -428,13 +436,8 @@ export default function ChocoGest() {
     depreciacaoAnual: 10,
     observacoes: '',
   });
-  const [movCaixa, setMovCaixa] = useState({
-    data: todayISO(),
-    descricao: '',
-    tipo: 'entrada' as 'entrada' | 'saida',
-    valor: 0,
-    categoria: 'Operacional',
-  });
+  const [movCaixa, setMovCaixa] = useState({ ...MOV_CAIXA_FORM_INICIAL });
+  const [movCaixaEditandoId, setMovCaixaEditandoId] = useState<number | null>(null);
   const [movBanco, setMovBanco] = useState({ ...MOV_BANCO_FORM_INICIAL });
   const [movBancoEditandoId, setMovBancoEditandoId] = useState<number | null>(null);
   const [novoBanco, setNovoBanco] = useState({ nome: '', agencia: '', conta: '' });
@@ -887,13 +890,69 @@ export default function ChocoGest() {
     update((prev) => ({ ...prev, patrimonio: prev.patrimonio.filter((p) => p.id !== id) }));
   };
 
-  const registrarMovCaixa = () => {
-    if (!movCaixa.descricao.trim() || movCaixa.valor <= 0) return alert('Preencha descrição e valor.');
+  const resetFormMovCaixa = () => {
+    setMovCaixa({ ...MOV_CAIXA_FORM_INICIAL, data: todayISO() });
+    setMovCaixaEditandoId(null);
+  };
+
+  const editarMovCaixa = (mov: MovimentoFinanceiro) => {
+    if (mov.referencia) {
+      return alert('Lançamentos automáticos de Compras/Vendas devem ser alterados na origem.');
+    }
+    setMovCaixa({
+      data: mov.data,
+      descricao: mov.descricao,
+      tipo: mov.tipo,
+      valor: mov.valor,
+      categoria: mov.categoria,
+    });
+    setMovCaixaEditandoId(mov.id);
+  };
+
+  const removerMovCaixa = (mov: MovimentoFinanceiro) => {
+    if (mov.referencia) {
+      return alert('Lançamentos automáticos de Compras/Vendas devem ser removidos na origem.');
+    }
+    if (!confirm('Remover este lançamento de caixa?')) return;
     update((prev) => ({
       ...prev,
-      movimentosCaixa: registrarMovimento(prev.movimentosCaixa, { ...movCaixa, data: movCaixa.data || todayISO() }),
+      movimentosCaixa: prev.movimentosCaixa.filter((m) => m.id !== mov.id),
     }));
-    setMovCaixa({ data: todayISO(), descricao: '', tipo: 'entrada', valor: 0, categoria: 'Operacional' });
+    if (movCaixaEditandoId === mov.id) {
+      resetFormMovCaixa();
+    }
+  };
+
+  const registrarMovCaixa = () => {
+    if (!movCaixa.descricao.trim() || movCaixa.valor <= 0) return alert('Preencha descrição e valor.');
+    const dataOperacao = movCaixa.data || todayISO();
+    const editando = movCaixaEditandoId !== null;
+
+    const movimento: Omit<MovimentoFinanceiro, 'id'> = {
+      data: dataOperacao,
+      descricao: movCaixa.descricao.trim(),
+      tipo: movCaixa.tipo,
+      valor: movCaixa.valor,
+      categoria: movCaixa.categoria,
+    };
+
+    update((prev) => {
+      if (editando) {
+        return {
+          ...prev,
+          movimentosCaixa: prev.movimentosCaixa.map((m) =>
+            m.id === movCaixaEditandoId ? { ...movimento, id: movCaixaEditandoId } : m
+          ),
+        };
+      }
+      return {
+        ...prev,
+        movimentosCaixa: registrarMovimento(prev.movimentosCaixa, movimento),
+      };
+    });
+
+    resetFormMovCaixa();
+    alert(editando ? 'Lançamento atualizado!' : 'Lançamento registrado!');
   };
 
   const resetFormMovBanco = () => {
@@ -1676,6 +1735,9 @@ export default function ChocoGest() {
                 Caixa — Saldo: {formatCurrency(saldoCaixa)}
               </SectionTitle>
               <Card className="mb-6">
+                {movCaixaEditandoId !== null && (
+                  <p className="text-amber-300 text-sm mb-4">Editando lançamento #{movCaixaEditandoId}</p>
+                )}
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
                   <DateField
                     label="Data do movimento"
@@ -1691,27 +1753,59 @@ export default function ChocoGest() {
                   <Field label="Valor (R$)"><input type="number" step="0.01" className={inputCls} value={movCaixa.valor} onChange={(e) => setMovCaixa((p) => ({ ...p, valor: +e.target.value }))} /></Field>
                   <Field label="Categoria"><input className={inputCls} value={movCaixa.categoria} onChange={(e) => setMovCaixa((p) => ({ ...p, categoria: e.target.value }))} /></Field>
                 </div>
-                <Btn className="mt-4" onClick={registrarMovCaixa}>Registrar Movimento</Btn>
+                <div className="flex flex-wrap gap-2 mt-4">
+                  <Btn onClick={registrarMovCaixa}>
+                    {movCaixaEditandoId !== null ? 'Salvar alterações' : 'Registrar Movimento'}
+                  </Btn>
+                  {movCaixaEditandoId !== null && (
+                    <Btn variant="secondary" onClick={resetFormMovCaixa}>Cancelar</Btn>
+                  )}
+                </div>
               </Card>
               <Card>
-                <table className="w-full text-sm">
-                  <thead><tr className="text-amber-300 border-b border-amber-700">
-                    <th className="text-left py-2">Data</th><th className="text-left py-2">Descrição</th>
-                    <th className="text-left py-2">Tipo</th><th className="text-right py-2">Valor</th>
-                  </tr></thead>
-                  <tbody>
-                    {data.movimentosCaixa.slice().reverse().map((m) => (
-                      <tr key={m.id} className="border-b border-amber-800/30">
-                        <td className="py-2">{formatDate(m.data)}</td>
-                        <td className="py-2">{m.descricao}</td>
-                        <td className={`py-2 ${m.tipo === 'entrada' ? 'text-green-400' : 'text-red-400'}`}>
-                          {m.tipo === 'entrada' ? '↑ Entrada' : '↓ Saída'}
-                        </td>
-                        <td className="py-2 text-right">{formatCurrency(m.valor)}</td>
+                <h4 className="text-amber-200 font-medium mb-4">Histórico de lançamentos</h4>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm min-w-[640px]">
+                    <thead>
+                      <tr className="text-amber-300 border-b border-amber-700">
+                        <th className="text-left py-2">Data</th>
+                        <th className="text-left py-2">Descrição</th>
+                        <th className="text-left py-2">Tipo</th>
+                        <th className="text-right py-2">Valor</th>
+                        <th className="text-right py-2 w-32">Ações</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {data.movimentosCaixa.slice().reverse().map((m) => (
+                        <tr
+                          key={m.id}
+                          className={`border-b border-amber-800/30 ${movCaixaEditandoId === m.id ? 'bg-amber-900/30' : ''}`}
+                        >
+                          <td className="py-2">{formatDate(m.data)}</td>
+                          <td className="py-2">
+                            {m.descricao}
+                            {m.referencia && <span className="text-amber-500/70 text-xs ml-1">(auto)</span>}
+                          </td>
+                          <td className={`py-2 ${m.tipo === 'entrada' ? 'text-green-400' : 'text-red-400'}`}>
+                            {m.tipo === 'entrada' ? '↑ Entrada' : '↓ Saída'}
+                          </td>
+                          <td className="py-2 text-right">{formatCurrency(m.valor)}</td>
+                          <td className="py-2 text-right whitespace-nowrap">
+                            {!m.referencia ? (
+                              <>
+                                <Btn variant="secondary" onClick={() => editarMovCaixa(m)}>Editar</Btn>
+                                {' '}
+                                <Btn variant="danger" onClick={() => removerMovCaixa(m)}>Excluir</Btn>
+                              </>
+                            ) : (
+                              <span className="text-amber-500/60 text-xs">Compras/Vendas</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </Card>
             </div>
           )}
