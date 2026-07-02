@@ -258,30 +258,47 @@ export default function ChocoGest() {
   };
 
   const adicionarItemCompra = () => {
-    if (!itemCompra.nome.trim()) return;
-    const item: ItemMovimentacao = {
-      id: nextId(novaCompra.itens),
-      ...itemCompra,
-    };
-    setNovaCompra((p) => ({ ...p, itens: [...p.itens, item] }));
+    if (!itemCompra.nome.trim()) {
+      return alert('Informe o nome do item antes de adicionar.');
+    }
+    setNovaCompra((p) => {
+      const item: ItemMovimentacao = {
+        id: nextId(p.itens),
+        ...itemCompra,
+      };
+      return { ...p, itens: [...p.itens, item] };
+    });
     setItemCompra({ nome: '', tipo: 'MateriaPrima', quantidade: 1, unidade: 'kg', valorUnit: 0 });
   };
 
   const registrarCompra = () => {
-    if (!novaCompra.fornecedor.trim() || novaCompra.itens.length === 0) {
-      return alert('Preencha fornecedor e adicione itens.');
+    const fornecedor = novaCompra.fornecedor.trim();
+    const itens: ItemMovimentacao[] = [...novaCompra.itens];
+
+    if (itemCompra.nome.trim()) {
+      itens.push({ id: nextId(itens), ...itemCompra });
     }
-    const total = sumBy(novaCompra.itens, (i) => i.quantidade * i.valorUnit);
+
+    if (!fornecedor) {
+      return alert('Informe o nome do fornecedor.');
+    }
+    if (itens.length === 0) {
+      return alert(
+        'Adicione pelo menos um item à compra.\n\nPreencha Nome, Qtd e Valor abaixo — o item será incluído ao clicar em "Registrar Compra" ou em "+ Item".'
+      );
+    }
+
+    const total = sumBy(itens, (i) => i.quantidade * i.valorUnit);
     const cartao = data.cartoes.find((c) => c.id === novaCompra.cartaoId);
     const compra: Compra = {
       id: nextId(data.compras),
       data: todayISO(),
-      fornecedor: novaCompra.fornecedor,
+      fornecedor,
       formaPagamento: novaCompra.formaPagamento,
       cartao: novaCompra.formaPagamento === 'Cartao' ? (cartao?.nome ?? null) : null,
       parcelas: novaCompra.parcelas,
       total,
-      itens: novaCompra.itens,
+      itens,
     };
 
     update((prev) => {
@@ -319,6 +336,7 @@ export default function ChocoGest() {
     });
 
     setNovaCompra({ fornecedor: '', formaPagamento: 'Cartao', cartaoId: 1, parcelas: 1, itens: [] });
+    setItemCompra({ nome: '', tipo: 'MateriaPrima', quantidade: 1, unidade: 'kg', valorUnit: 0 });
     alert('Compra registrada com sucesso!');
   };
 
@@ -730,27 +748,38 @@ export default function ChocoGest() {
               <Card className="mb-6">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
                   <Field label="Fornecedor">
-                    <input className={inputCls} value={novaCompra.fornecedor} onChange={(e) => setNovaCompra({ ...novaCompra, fornecedor: e.target.value })} />
+                    <input
+                      className={inputCls}
+                      value={novaCompra.fornecedor}
+                      onChange={(e) => setNovaCompra((p) => ({ ...p, fornecedor: e.target.value }))}
+                    />
                   </Field>
                   <Field label="Forma de Pagamento">
-                    <select className={inputCls} value={novaCompra.formaPagamento} onChange={(e) => setNovaCompra({ ...novaCompra, formaPagamento: e.target.value })}>
+                    <select
+                      className={inputCls}
+                      value={novaCompra.formaPagamento}
+                      onChange={(e) => setNovaCompra((p) => ({ ...p, formaPagamento: e.target.value }))}
+                    >
                       <option>Dinheiro</option><option>Cartao</option><option>Pix</option><option>Transferencia</option>
                     </select>
                   </Field>
                   {novaCompra.formaPagamento === 'Cartao' && (
                     <>
                       <Field label="Cartão">
-                        <select className={inputCls} value={novaCompra.cartaoId} onChange={(e) => setNovaCompra({ ...novaCompra, cartaoId: +e.target.value })}>
+                        <select className={inputCls} value={novaCompra.cartaoId} onChange={(e) => setNovaCompra((p) => ({ ...p, cartaoId: +e.target.value }))}>
                           {data.cartoes.map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
                         </select>
                       </Field>
                       <Field label="Parcelas">
-                        <input type="number" min={1} className={inputCls} value={novaCompra.parcelas} onChange={(e) => setNovaCompra({ ...novaCompra, parcelas: +e.target.value })} />
+                        <input type="number" min={1} className={inputCls} value={novaCompra.parcelas} onChange={(e) => setNovaCompra((p) => ({ ...p, parcelas: +e.target.value }))} />
                       </Field>
                     </>
                   )}
                 </div>
-                <h4 className="text-amber-200 mb-2">Adicionar Item</h4>
+                <h4 className="text-amber-200 mb-1">Itens da compra</h4>
+                <p className="text-amber-400/70 text-xs mb-2">
+                  Preencha os campos abaixo. Use &quot;+ Item&quot; para adicionar vários, ou &quot;Registrar Compra&quot; para incluir o item atual automaticamente.
+                </p>
                 <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-3">
                   <input placeholder="Nome" className={inputCls} value={itemCompra.nome} onChange={(e) => setItemCompra({ ...itemCompra, nome: e.target.value })} />
                   <select className={inputCls} value={itemCompra.tipo} onChange={(e) => setItemCompra({ ...itemCompra, tipo: e.target.value as TipoItem })}>
