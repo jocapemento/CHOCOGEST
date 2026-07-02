@@ -211,6 +211,74 @@ const COMPRA_FORM_INICIAL = {
   itens: [] as ItemMovimentacao[],
 };
 
+function removerMovimentosVenda(
+  movCaixa: MovimentoFinanceiro[],
+  movBanco: MovimentoFinanceiro[],
+  vendaId: number
+) {
+  const ref = `venda-${vendaId}`;
+  return {
+    movCaixa: movCaixa.filter((m) => m.referencia !== ref),
+    movBanco: movBanco.filter((m) => m.referencia !== ref),
+  };
+}
+
+function aplicarMovimentoVenda(
+  movCaixa: MovimentoFinanceiro[],
+  movBanco: MovimentoFinanceiro[],
+  venda: Venda,
+  total: number,
+  dataOperacao: string
+) {
+  const desc = `Venda: ${venda.cliente}`;
+  let caixa = movCaixa;
+  let banco = movBanco;
+
+  if (venda.formaPagamento === 'Dinheiro') {
+    caixa = registrarMovimento(caixa, {
+      data: dataOperacao,
+      descricao: desc,
+      tipo: 'entrada',
+      valor: total,
+      categoria: 'Vendas',
+      referencia: `venda-${venda.id}`,
+    });
+  } else {
+    banco = registrarMovimento(banco, {
+      data: dataOperacao,
+      descricao: desc,
+      tipo: 'entrada',
+      valor: total,
+      categoria: 'Vendas',
+      referencia: `venda-${venda.id}`,
+    });
+  }
+
+  return { movCaixa: caixa, movBanco: banco };
+}
+
+function reverterEfeitosVenda(prev: AppData, venda: Venda): AppData {
+  const { movCaixa, movBanco } = removerMovimentosVenda(
+    prev.movimentosCaixa,
+    prev.movimentosBanco,
+    venda.id
+  );
+
+  return {
+    ...prev,
+    estoque: atualizarEstoqueCompra(prev.estoque, venda.itens),
+    movimentosCaixa: movCaixa,
+    movimentosBanco: movBanco,
+  };
+}
+
+const VENDA_FORM_INICIAL = {
+  data: todayISO(),
+  cliente: '',
+  formaPagamento: 'Dinheiro',
+  itens: [] as ItemMovimentacao[],
+};
+
 // Shared UI
 function SectionTitle({ children, action }: { children: React.ReactNode; action?: React.ReactNode }) {
   return (
@@ -304,12 +372,8 @@ export default function ChocoGest() {
     unidade: 'kg',
     valorUnit: 0,
   });
-  const [novaVenda, setNovaVenda] = useState({
-    data: todayISO(),
-    cliente: '',
-    formaPagamento: 'Dinheiro',
-    itens: [] as ItemMovimentacao[],
-  });
+  const [novaVenda, setNovaVenda] = useState({ ...VENDA_FORM_INICIAL });
+  const [vendaEditandoId, setVendaEditandoId] = useState<number | null>(null);
   const [itemVenda, setItemVenda] = useState({
     nome: '',
     quantidade: 1,
@@ -550,14 +614,79 @@ export default function ChocoGest() {
     setItemVenda({ nome: '', quantidade: 1, valorUnit: 0 });
   };
 
+  const removerItemVendaLista = (id: number) => {
+    setNovaVenda((p) => ({ ...p, itens: p.itens.filter((i) => i.id !== id) }));
+  };
+
+  const resetFormVenda = () => {
+    setNovaVenda({ ...VENDA_FORM_INICIAL, data: todayISO() });
+    setItemVenda({ nome: '', quantidade: 1, valorUnit: 0 });
+    setVendaEditandoId(null);
+  };
+
+  const cancelarEdicaoVenda = () => {
+    resetFormVenda();
+  };
+
+  const editarVenda = (venda: Venda) => {
+    setNovaVenda({
+      data: venda.data,
+      cliente: venda.cliente,
+      formaPagamento: venda.formaPagamento,
+      itens: venda.itens.map((i) => ({ ...i })),
+    });
+    setVendaEditandoId(venda.id);
+    setItemVenda({ nome: '', quantidade: 1, valorUnit: 0 });
+  };
+
+  const removerVenda = (id: number) => {
+    if (
+      !confirm(
+        'Remover este lançamento de venda? O estoque e os movimentos financeiros serão ajustados.'
+      )
+    ) {
+      return;
+    }
+
+    update((prev) => {
+      const venda = prev.vendas.find((v) => v.id === id);
+      if (!venda) return prev;
+      const reverted = reverterEfeitosVenda(prev, venda);
+      return { ...reverted, vendas: reverted.vendas.filter((v) => v.id !== id) };
+    });
+
+    if (vendaEditandoId === id) {
+      resetFormVenda();
+    }
+  };
+
+  const aplicarEfeitosVenda = (prev: AppData, venda: Venda, dataOperacao: string) => {
+    const { movCaixa, movBanco } = aplicarMovimentoVenda(
+      prev.movimentosCaixa,
+      prev.movimentosBanco,
+      venda,
+      venda.total,
+      dataOperacao
+    );
+
+    return {
+      ...prev,
+      estoque: atualizarEstoqueVenda(prev.estoque, venda.itens),
+      movimentosCaixa: movCaixa,
+      movimentosBanco: movBanco,
+    };
+  };
+
   const registrarVenda = () => {
     if (!novaVenda.cliente.trim() || novaVenda.itens.length === 0) {
       return alert('Preencha cliente e adicione itens.');
     }
     const total = sumBy(novaVenda.itens, (i) => i.quantidade * i.valorUnit);
     const dataOperacao = novaVenda.data || todayISO();
+    const editando = vendaEditandoId !== null;
+
     const venda: Venda = {
-      id: nextId(data.vendas),
+      id: editando ? vendaEditandoId : nextId(data.vendas),
       data: dataOperacao,
       cliente: novaVenda.cliente,
       formaPagamento: novaVenda.formaPagamento,
@@ -566,41 +695,25 @@ export default function ChocoGest() {
     };
 
     update((prev) => {
-      let movCaixa = prev.movimentosCaixa;
-      let movBanco = prev.movimentosBanco;
-      const desc = `Venda: ${venda.cliente}`;
+      if (editando) {
+        const antiga = prev.vendas.find((v) => v.id === vendaEditandoId);
+        if (!antiga) return prev;
 
-      if (venda.formaPagamento === 'Dinheiro') {
-        movCaixa = registrarMovimento(movCaixa, {
-          data: dataOperacao,
-          descricao: desc,
-          tipo: 'entrada',
-          valor: total,
-          categoria: 'Vendas',
-          referencia: `venda-${venda.id}`,
-        });
-      } else {
-        movBanco = registrarMovimento(movBanco, {
-          data: dataOperacao,
-          descricao: desc,
-          tipo: 'entrada',
-          valor: total,
-          categoria: 'Vendas',
-          referencia: `venda-${venda.id}`,
-        });
+        let state = reverterEfeitosVenda(prev, antiga);
+        state = aplicarEfeitosVenda(state, venda, dataOperacao);
+
+        return {
+          ...state,
+          vendas: state.vendas.map((v) => (v.id === vendaEditandoId ? venda : v)),
+        };
       }
 
-      return {
-        ...prev,
-        vendas: [...prev.vendas, venda],
-        estoque: atualizarEstoqueVenda(prev.estoque, venda.itens),
-        movimentosCaixa: movCaixa,
-        movimentosBanco: movBanco,
-      };
+      const state = aplicarEfeitosVenda(prev, venda, dataOperacao);
+      return { ...state, vendas: [...state.vendas, venda] };
     });
 
-    setNovaVenda({ data: todayISO(), cliente: '', formaPagamento: 'Dinheiro', itens: [] });
-    alert('Venda registrada com sucesso!');
+    resetFormVenda();
+    alert(editando ? 'Venda atualizada com sucesso!' : 'Venda registrada com sucesso!');
   };
 
   const adicionarIngrediente = () => {
@@ -1078,6 +1191,11 @@ export default function ChocoGest() {
             <div>
               <SectionTitle action={<Btn variant="secondary" onClick={() => gerarPdfVendas(data)}>📄 PDF</Btn>}>Vendas</SectionTitle>
               <Card className="mb-6">
+                {vendaEditandoId !== null && (
+                  <p className="text-amber-300 text-sm mb-4">
+                    Editando venda #{vendaEditandoId}
+                  </p>
+                )}
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-4">
                   <DateField
                     label="Data da venda"
@@ -1105,32 +1223,59 @@ export default function ChocoGest() {
                 {novaVenda.itens.length > 0 && (
                   <div className="mt-4 text-sm space-y-1">
                     {novaVenda.itens.map((i) => (
-                      <div key={i.id} className="flex justify-between text-amber-200">
+                      <div key={i.id} className="flex justify-between items-center text-amber-200 gap-2">
                         <span>{i.nome} × {i.quantidade}</span>
-                        <span>{formatCurrency(i.quantidade * i.valorUnit)}</span>
+                        <div className="flex items-center gap-2">
+                          <span>{formatCurrency(i.quantidade * i.valorUnit)}</span>
+                          <Btn variant="danger" className="px-2 py-1" onClick={() => removerItemVendaLista(i.id)}>✕</Btn>
+                        </div>
                       </div>
                     ))}
                   </div>
                 )}
-                <Btn className="mt-4" onClick={registrarVenda}>Registrar Venda</Btn>
+                <div className="flex flex-wrap gap-2 mt-4">
+                  <Btn onClick={registrarVenda}>
+                    {vendaEditandoId !== null ? 'Salvar alterações' : 'Registrar Venda'}
+                  </Btn>
+                  {vendaEditandoId !== null && (
+                    <Btn variant="secondary" onClick={cancelarEdicaoVenda}>Cancelar</Btn>
+                  )}
+                </div>
               </Card>
               <Card>
-                <table className="w-full text-sm">
-                  <thead><tr className="text-amber-300 border-b border-amber-700">
-                    <th className="text-left py-2">Data</th><th className="text-left py-2">Cliente</th>
-                    <th className="text-left py-2">Pagamento</th><th className="text-right py-2">Total</th>
-                  </tr></thead>
-                  <tbody>
-                    {data.vendas.slice().reverse().map((v) => (
-                      <tr key={v.id} className="border-b border-amber-800/30">
-                        <td className="py-2">{formatDate(v.data)}</td>
-                        <td className="py-2">{v.cliente}</td>
-                        <td className="py-2">{v.formaPagamento}</td>
-                        <td className="py-2 text-right">{formatCurrency(v.total)}</td>
+                <h4 className="text-amber-200 font-medium mb-4">Histórico de vendas</h4>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm min-w-[640px]">
+                    <thead>
+                      <tr className="text-amber-300 border-b border-amber-700">
+                        <th className="text-left py-2">Data</th>
+                        <th className="text-left py-2">Cliente</th>
+                        <th className="text-left py-2">Pagamento</th>
+                        <th className="text-right py-2">Total</th>
+                        <th className="text-right py-2 w-32">Ações</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {data.vendas.slice().reverse().map((v) => (
+                        <tr
+                          key={v.id}
+                          className={`border-b border-amber-800/30 ${vendaEditandoId === v.id ? 'bg-amber-900/30' : ''}`}
+                        >
+                          <td className="py-2">{formatDate(v.data)}</td>
+                          <td className="py-2">{v.cliente}</td>
+                          <td className="py-2">{v.formaPagamento}</td>
+                          <td className="py-2 text-right">{formatCurrency(v.total)}</td>
+                          <td className="py-2 text-right whitespace-nowrap">
+                            <Btn variant="secondary" onClick={() => editarVenda(v)}>Editar</Btn>
+                            {' '}
+                            <Btn variant="danger" onClick={() => removerVenda(v.id)}>Excluir</Btn>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {data.vendas.length === 0 && <p className="text-amber-400/60 py-4">Nenhuma venda registrada.</p>}
               </Card>
             </div>
           )}
