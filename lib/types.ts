@@ -1,0 +1,130 @@
+export type TipoItem =
+  | 'MateriaPrima'
+  | 'ProdutoAcabado'
+  | 'Equipamento'
+  | 'Energia'
+  | 'Agua'
+  | 'Embalagem'
+  | 'Transporte'
+  | 'Outros';
+
+export interface EstoqueItem {
+  id: number;
+  nome: string;
+  tipo: TipoItem;
+  quantidade: number;
+  unidade: string;
+  valorUnit: number;
+  data?: string;
+}
+
+export interface ItemMovimentacao {
+  id: number;
+  nome: string;
+  tipo: TipoItem;
+  quantidade: number;
+  unidade: string;
+  valorUnit: number;
+}
+
+export interface Compra {
+  id: number;
+  data: string;
+  fornecedor: string;
+  formaPagamento: string;
+  cartao: string | null;
+  parcelas: number;
+  total: number;
+  itens: ItemMovimentacao[];
+}
+
+export interface Venda {
+  id: number;
+  data: string;
+  cliente: string;
+  formaPagamento: string;
+  total: number;
+  itens: ItemMovimentacao[];
+}
+
+export interface Producao {
+  id: number;
+  data: string;
+  lote: string;
+  produto: string;
+  quantidade: number;
+  unidade: string;
+  ingredientes: Array<{ nome: string; quantidade: number; valorUnit: number }>;
+  custoEstimado: number;
+}
+
+export interface CartaoModel {
+  id: number;
+  nome: string;
+  limite?: number;
+}
+
+export interface PatrimonioItem {
+  id: number;
+  nome: string;
+  categoria: string;
+  dataAquisicao: string;
+  valorAquisicao: number;
+  valorAtual: number;
+  depreciacaoAnual: number;
+  observacoes?: string;
+}
+
+export interface MovimentoFinanceiro {
+  id: number;
+  data: string;
+  descricao: string;
+  tipo: 'entrada' | 'saida';
+  valor: number;
+  categoria: string;
+  referencia?: string;
+}
+
+export interface AppData {
+  estoque: EstoqueItem[];
+  compras: Compra[];
+  vendas: Venda[];
+  producoes: Producao[];
+  cartoes: CartaoModel[];
+  patrimonio: PatrimonioItem[];
+  movimentosCaixa: MovimentoFinanceiro[];
+  movimentosBanco: MovimentoFinanceiro[];
+}
+
+export const TIPOS_ITEM: TipoItem[] = [
+  'MateriaPrima',
+  'ProdutoAcabado',
+  'Equipamento',
+  'Energia',
+  'Agua',
+  'Embalagem',
+  'Transporte',
+  'Outros',
+];
+
+export const STORAGE_KEYS = {
+  estoque: 'chocogest_estoque',
+  compras: 'chocogest_compras',
+  vendas: 'chocogest_vendas',
+  producoes: 'chocogest_producoes',
+  cartoes: 'chocogest_cartoes',
+  patrimonio: 'chocogest_patrimonio',
+  caixa: 'chocogest_caixa',
+  banco: 'chocogest_banco',
+} as const;
+
+export const EMPTY_DATA: AppData = {
+  estoque: [],
+  compras: [],
+  vendas: [],
+  producoes: [],
+  cartoes: [{ id: 1, nome: 'Cartão Principal', limite: 5000 }],
+  patrimonio: [],
+  movimentosCaixa: [],
+  movimentosBanco: [],
+};
