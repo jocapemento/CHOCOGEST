@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import type {
   AppData,
+  BancoModel,
   CartaoModel,
   Compra,
   EstoqueItem,
@@ -52,6 +53,11 @@ function calcSaldo(movimentos: MovimentoFinanceiro[]) {
   const entradas = sumBy(movimentos.filter((m) => m.tipo === 'entrada'), (m) => m.valor);
   const saidas = sumBy(movimentos.filter((m) => m.tipo === 'saida'), (m) => m.valor);
   return entradas - saidas;
+}
+
+function calcSaldoBanco(movimentos: MovimentoFinanceiro[], bancoNome: string) {
+  const doBanco = movimentos.filter((m) => m.banco === bancoNome);
+  return calcSaldo(doBanco);
 }
 
 function registrarMovimento(
@@ -167,7 +173,8 @@ function aplicarMovimentoCompra(
   movBanco: MovimentoFinanceiro[],
   compra: Compra,
   total: number,
-  dataOperacao: string
+  dataOperacao: string,
+  bancoPadrao?: string
 ) {
   const desc = `Compra: ${compra.fornecedor}`;
   let caixa = movCaixa;
@@ -190,6 +197,7 @@ function aplicarMovimentoCompra(
       valor: total,
       categoria: 'Compras',
       referencia: `compra-${compra.id}`,
+      banco: bancoPadrao,
     });
   }
 
@@ -239,7 +247,8 @@ function aplicarMovimentoVenda(
   movBanco: MovimentoFinanceiro[],
   venda: Venda,
   total: number,
-  dataOperacao: string
+  dataOperacao: string,
+  bancoPadrao?: string
 ) {
   const desc = `Venda: ${venda.cliente}`;
   let caixa = movCaixa;
@@ -262,6 +271,7 @@ function aplicarMovimentoVenda(
       valor: total,
       categoria: 'Vendas',
       referencia: `venda-${venda.id}`,
+      banco: bancoPadrao,
     });
   }
 
@@ -288,6 +298,15 @@ const VENDA_FORM_INICIAL = {
   cliente: '',
   formaPagamento: 'Dinheiro',
   itens: [] as ItemMovimentacao[],
+};
+
+const MOV_BANCO_FORM_INICIAL = {
+  data: todayISO(),
+  descricao: '',
+  tipo: 'entrada' as 'entrada' | 'saida',
+  valor: 0,
+  categoria: 'Operacional',
+  bancoId: 1,
 };
 
 // Shared UI
@@ -416,13 +435,9 @@ export default function ChocoGest() {
     valor: 0,
     categoria: 'Operacional',
   });
-  const [movBanco, setMovBanco] = useState({
-    data: todayISO(),
-    descricao: '',
-    tipo: 'entrada' as 'entrada' | 'saida',
-    valor: 0,
-    categoria: 'Operacional',
-  });
+  const [movBanco, setMovBanco] = useState({ ...MOV_BANCO_FORM_INICIAL });
+  const [movBancoEditandoId, setMovBancoEditandoId] = useState<number | null>(null);
+  const [novoBanco, setNovoBanco] = useState({ nome: '', agencia: '', conta: '' });
   const [margemLucro, setMargemLucro] = useState(40);
   const [produtoPreco, setProdutoPreco] = useState('');
 
@@ -558,7 +573,8 @@ export default function ChocoGest() {
       prev.movimentosBanco,
       compra,
       compra.total,
-      dataOperacao
+      dataOperacao,
+      prev.bancos[0]?.nome
     );
 
     return {
@@ -704,7 +720,8 @@ export default function ChocoGest() {
       prev.movimentosBanco,
       venda,
       venda.total,
-      dataOperacao
+      dataOperacao,
+      prev.bancos[0]?.nome
     );
 
     return {
@@ -879,13 +896,97 @@ export default function ChocoGest() {
     setMovCaixa({ data: todayISO(), descricao: '', tipo: 'entrada', valor: 0, categoria: 'Operacional' });
   };
 
-  const registrarMovBanco = () => {
-    if (!movBanco.descricao.trim() || movBanco.valor <= 0) return alert('Preencha descrição e valor.');
+  const resetFormMovBanco = () => {
+    setMovBanco({ ...MOV_BANCO_FORM_INICIAL, data: todayISO(), bancoId: data.bancos[0]?.id ?? 1 });
+    setMovBancoEditandoId(null);
+  };
+
+  const adicionarBanco = () => {
+    if (!novoBanco.nome.trim()) return alert('Informe o nome do banco.');
     update((prev) => ({
       ...prev,
-      movimentosBanco: registrarMovimento(prev.movimentosBanco, { ...movBanco, data: movBanco.data || todayISO() }),
+      bancos: [...prev.bancos, { id: nextId(prev.bancos), ...novoBanco }],
     }));
-    setMovBanco({ data: todayISO(), descricao: '', tipo: 'entrada', valor: 0, categoria: 'Operacional' });
+    setNovoBanco({ nome: '', agencia: '', conta: '' });
+  };
+
+  const removerBanco = (id: number) => {
+    const banco = data.bancos.find((b) => b.id === id);
+    if (!banco) return;
+    const temMovimentos = data.movimentosBanco.some((m) => m.banco === banco.nome);
+    if (temMovimentos) {
+      return alert('Não é possível remover: existem lançamentos vinculados a este banco.');
+    }
+    if (!confirm(`Remover o banco "${banco.nome}"?`)) return;
+    update((prev) => ({ ...prev, bancos: prev.bancos.filter((b) => b.id !== id) }));
+    if (movBanco.bancoId === id) {
+      setMovBanco((p) => ({ ...p, bancoId: data.bancos.find((b) => b.id !== id)?.id ?? 1 }));
+    }
+  };
+
+  const editarMovBanco = (mov: MovimentoFinanceiro) => {
+    if (mov.referencia) {
+      return alert('Lançamentos automáticos de Compras/Vendas devem ser alterados na origem.');
+    }
+    const banco = data.bancos.find((b) => b.nome === mov.banco);
+    setMovBanco({
+      data: mov.data,
+      descricao: mov.descricao,
+      tipo: mov.tipo,
+      valor: mov.valor,
+      categoria: mov.categoria,
+      bancoId: banco?.id ?? data.bancos[0]?.id ?? 1,
+    });
+    setMovBancoEditandoId(mov.id);
+  };
+
+  const removerMovBanco = (mov: MovimentoFinanceiro) => {
+    if (mov.referencia) {
+      return alert('Lançamentos automáticos de Compras/Vendas devem ser removidos na origem.');
+    }
+    if (!confirm('Remover este lançamento bancário?')) return;
+    update((prev) => ({
+      ...prev,
+      movimentosBanco: prev.movimentosBanco.filter((m) => m.id !== mov.id),
+    }));
+    if (movBancoEditandoId === mov.id) {
+      resetFormMovBanco();
+    }
+  };
+
+  const registrarMovBanco = () => {
+    if (!movBanco.descricao.trim() || movBanco.valor <= 0) return alert('Preencha descrição e valor.');
+    const banco = data.bancos.find((b) => b.id === movBanco.bancoId);
+    if (!banco) return alert('Selecione um banco cadastrado.');
+    const dataOperacao = movBanco.data || todayISO();
+    const editando = movBancoEditandoId !== null;
+
+    const movimento: Omit<MovimentoFinanceiro, 'id'> = {
+      data: dataOperacao,
+      descricao: movBanco.descricao.trim(),
+      tipo: movBanco.tipo,
+      valor: movBanco.valor,
+      categoria: movBanco.categoria,
+      banco: banco.nome,
+    };
+
+    update((prev) => {
+      if (editando) {
+        return {
+          ...prev,
+          movimentosBanco: prev.movimentosBanco.map((m) =>
+            m.id === movBancoEditandoId ? { ...movimento, id: movBancoEditandoId } : m
+          ),
+        };
+      }
+      return {
+        ...prev,
+        movimentosBanco: registrarMovimento(prev.movimentosBanco, movimento),
+      };
+    });
+
+    resetFormMovBanco();
+    alert(editando ? 'Lançamento atualizado!' : 'Lançamento registrado!');
   };
 
   const handleImportBackup = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1622,42 +1723,131 @@ export default function ChocoGest() {
                 Banco — Saldo: {formatCurrency(saldoBanco)}
               </SectionTitle>
               <Card className="mb-6">
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+                <h4 className="text-amber-200 font-medium mb-4">Cadastro de banco</h4>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <Field label="Nome do banco">
+                    <input className={inputCls} value={novoBanco.nome} onChange={(e) => setNovoBanco((p) => ({ ...p, nome: e.target.value }))} />
+                  </Field>
+                  <Field label="Agência">
+                    <input className={inputCls} value={novoBanco.agencia} onChange={(e) => setNovoBanco((p) => ({ ...p, agencia: e.target.value }))} />
+                  </Field>
+                  <Field label="Conta">
+                    <input className={inputCls} value={novoBanco.conta} onChange={(e) => setNovoBanco((p) => ({ ...p, conta: e.target.value }))} />
+                  </Field>
+                </div>
+                <Btn className="mt-4" onClick={adicionarBanco}>Adicionar Banco</Btn>
+              </Card>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
+                {data.bancos.map((b: BancoModel) => (
+                  <Card key={b.id}>
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <div className="text-lg font-bold">{b.nome}</div>
+                        {b.agencia && <div className="text-amber-300 text-sm">Agência: {b.agencia}</div>}
+                        {b.conta && <div className="text-amber-300 text-sm">Conta: {b.conta}</div>}
+                        <div className="text-amber-300 text-sm mt-1">
+                          Saldo: {formatCurrency(calcSaldoBanco(data.movimentosBanco, b.nome))}
+                        </div>
+                      </div>
+                      <Btn variant="danger" onClick={() => removerBanco(b.id)}>✕</Btn>
+                    </div>
+                  </Card>
+                ))}
+              </div>
+              <Card className="mb-6">
+                {movBancoEditandoId !== null && (
+                  <p className="text-amber-300 text-sm mb-4">Editando lançamento #{movBancoEditandoId}</p>
+                )}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                   <DateField
                     label="Data do movimento"
                     value={movBanco.data}
                     onChange={(data) => setMovBanco((p) => ({ ...p, data }))}
                   />
-                  <Field label="Descrição"><input className={inputCls} value={movBanco.descricao} onChange={(e) => setMovBanco((p) => ({ ...p, descricao: e.target.value }))} /></Field>
+                  <Field label="Banco">
+                    <select
+                      className={inputCls}
+                      value={movBanco.bancoId}
+                      onChange={(e) => setMovBanco((p) => ({ ...p, bancoId: +e.target.value }))}
+                    >
+                      {data.bancos.map((b) => (
+                        <option key={b.id} value={b.id}>{b.nome}</option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field label="Descrição">
+                    <input className={inputCls} value={movBanco.descricao} onChange={(e) => setMovBanco((p) => ({ ...p, descricao: e.target.value }))} />
+                  </Field>
                   <Field label="Tipo">
                     <select className={inputCls} value={movBanco.tipo} onChange={(e) => setMovBanco((p) => ({ ...p, tipo: e.target.value as 'entrada' | 'saida' }))}>
                       <option value="entrada">Entrada</option><option value="saida">Saída</option>
                     </select>
                   </Field>
-                  <Field label="Valor (R$)"><input type="number" step="0.01" className={inputCls} value={movBanco.valor} onChange={(e) => setMovBanco((p) => ({ ...p, valor: +e.target.value }))} /></Field>
-                  <Field label="Categoria"><input className={inputCls} value={movBanco.categoria} onChange={(e) => setMovBanco((p) => ({ ...p, categoria: e.target.value }))} /></Field>
+                  <Field label="Valor (R$)">
+                    <input type="number" step="0.01" className={inputCls} value={movBanco.valor} onChange={(e) => setMovBanco((p) => ({ ...p, valor: +e.target.value }))} />
+                  </Field>
+                  <Field label="Categoria">
+                    <input className={inputCls} value={movBanco.categoria} onChange={(e) => setMovBanco((p) => ({ ...p, categoria: e.target.value }))} />
+                  </Field>
                 </div>
-                <Btn className="mt-4" onClick={registrarMovBanco}>Registrar Movimento</Btn>
+                <div className="flex flex-wrap gap-2 mt-4">
+                  <Btn onClick={registrarMovBanco}>
+                    {movBancoEditandoId !== null ? 'Salvar alterações' : 'Registrar Movimento'}
+                  </Btn>
+                  {movBancoEditandoId !== null && (
+                    <Btn variant="secondary" onClick={resetFormMovBanco}>Cancelar</Btn>
+                  )}
+                </div>
               </Card>
               <Card>
-                <table className="w-full text-sm">
-                  <thead><tr className="text-amber-300 border-b border-amber-700">
-                    <th className="text-left py-2">Data</th><th className="text-left py-2">Descrição</th>
-                    <th className="text-left py-2">Tipo</th><th className="text-right py-2">Valor</th>
-                  </tr></thead>
-                  <tbody>
-                    {data.movimentosBanco.slice().reverse().map((m) => (
-                      <tr key={m.id} className="border-b border-amber-800/30">
-                        <td className="py-2">{formatDate(m.data)}</td>
-                        <td className="py-2">{m.descricao}</td>
-                        <td className={`py-2 ${m.tipo === 'entrada' ? 'text-green-400' : 'text-red-400'}`}>
-                          {m.tipo === 'entrada' ? '↑ Entrada' : '↓ Saída'}
-                        </td>
-                        <td className="py-2 text-right">{formatCurrency(m.valor)}</td>
+                <h4 className="text-amber-200 font-medium mb-4">Histórico de lançamentos</h4>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm min-w-[720px]">
+                    <thead>
+                      <tr className="text-amber-300 border-b border-amber-700">
+                        <th className="text-left py-2">Data</th>
+                        <th className="text-left py-2">Banco</th>
+                        <th className="text-left py-2">Descrição</th>
+                        <th className="text-left py-2">Tipo</th>
+                        <th className="text-right py-2">Valor</th>
+                        <th className="text-right py-2 w-32">Ações</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {data.movimentosBanco.slice().reverse().map((m) => (
+                        <tr
+                          key={m.id}
+                          className={`border-b border-amber-800/30 ${movBancoEditandoId === m.id ? 'bg-amber-900/30' : ''}`}
+                        >
+                          <td className="py-2">{formatDate(m.data)}</td>
+                          <td className="py-2 text-amber-300">{m.banco ?? '—'}</td>
+                          <td className="py-2">
+                            {m.descricao}
+                            {m.referencia && <span className="text-amber-500/70 text-xs ml-1">(auto)</span>}
+                          </td>
+                          <td className={`py-2 ${m.tipo === 'entrada' ? 'text-green-400' : 'text-red-400'}`}>
+                            {m.tipo === 'entrada' ? '↑ Entrada' : '↓ Saída'}
+                          </td>
+                          <td className="py-2 text-right">{formatCurrency(m.valor)}</td>
+                          <td className="py-2 text-right whitespace-nowrap">
+                            {!m.referencia ? (
+                              <>
+                                <Btn variant="secondary" onClick={() => editarMovBanco(m)}>Editar</Btn>
+                                {' '}
+                                <Btn variant="danger" onClick={() => removerMovBanco(m)}>Excluir</Btn>
+                              </>
+                            ) : (
+                              <span className="text-amber-500/60 text-xs">Compras/Vendas</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {data.movimentosBanco.length === 0 && (
+                  <p className="text-amber-400/60 py-4">Nenhum lançamento bancário registrado.</p>
+                )}
               </Card>
             </div>
           )}

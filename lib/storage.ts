@@ -1,5 +1,6 @@
 import { AppData, EMPTY_DATA, STORAGE_KEYS } from './types';
 import type {
+  BancoModel,
   CartaoModel,
   Compra,
   EstoqueItem,
@@ -58,6 +59,19 @@ function normalizeMovimentos(items: unknown[]): MovimentoFinanceiro[] {
       valor: asNumber(item.valor),
       categoria: item.categoria ?? 'Outros',
       referencia: item.referencia,
+      banco: item.banco,
+    };
+  });
+}
+
+function normalizeBancos(items: unknown[]): BancoModel[] {
+  return items.map((raw, idx) => {
+    const item = raw as Partial<BancoModel>;
+    return {
+      id: item.id ?? idx + 1,
+      nome: item.nome ?? 'Banco',
+      agencia: item.agencia,
+      conta: item.conta,
     };
   });
 }
@@ -132,6 +146,7 @@ export function normalizeAppData(data: AppData): AppData {
     vendas: normalizeVendas(data.vendas),
     producoes: normalizeProducoes(data.producoes),
     cartoes: normalizeCartoes(data.cartoes),
+    bancos: normalizeBancos(data.bancos),
     patrimonio: normalizePatrimonio(data.patrimonio),
     movimentosCaixa: normalizeMovimentos(data.movimentosCaixa),
     movimentosBanco: normalizeMovimentos(data.movimentosBanco),
@@ -147,6 +162,7 @@ export function loadAppData(): AppData {
     { key: 'vendas', field: 'vendas' },
     { key: 'producoes', field: 'producoes' },
     { key: 'cartoes', field: 'cartoes' },
+    { key: 'bancos', field: 'bancos' },
     { key: 'patrimonio', field: 'patrimonio' },
     { key: 'caixa', field: 'movimentosCaixa' },
     { key: 'banco', field: 'movimentosBanco' },
@@ -170,6 +186,10 @@ export function loadAppData(): AppData {
     data.cartoes = [...EMPTY_DATA.cartoes];
   }
 
+  if (data.bancos.length === 0) {
+    data.bancos = [...EMPTY_DATA.bancos];
+  }
+
   return normalizeAppData(data);
 }
 
@@ -179,6 +199,7 @@ export function saveAppData(data: AppData): void {
   localStorage.setItem(STORAGE_KEYS.vendas, JSON.stringify(data.vendas));
   localStorage.setItem(STORAGE_KEYS.producoes, JSON.stringify(data.producoes));
   localStorage.setItem(STORAGE_KEYS.cartoes, JSON.stringify(data.cartoes));
+  localStorage.setItem(STORAGE_KEYS.bancos, JSON.stringify(data.bancos));
   localStorage.setItem(STORAGE_KEYS.patrimonio, JSON.stringify(data.patrimonio));
   localStorage.setItem(STORAGE_KEYS.caixa, JSON.stringify(data.movimentosCaixa));
   localStorage.setItem(STORAGE_KEYS.banco, JSON.stringify(data.movimentosBanco));

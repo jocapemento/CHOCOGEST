@@ -64,6 +64,13 @@ export interface CartaoModel {
   limite?: number;
 }
 
+export interface BancoModel {
+  id: number;
+  nome: string;
+  agencia?: string;
+  conta?: string;
+}
+
 export interface PatrimonioItem {
   id: number;
   nome: string;
@@ -83,6 +90,7 @@ export interface MovimentoFinanceiro {
   valor: number;
   categoria: string;
   referencia?: string;
+  banco?: string;
 }
 
 export interface AppData {
@@ -91,6 +99,7 @@ export interface AppData {
   vendas: Venda[];
   producoes: Producao[];
   cartoes: CartaoModel[];
+  bancos: BancoModel[];
   patrimonio: PatrimonioItem[];
   movimentosCaixa: MovimentoFinanceiro[];
   movimentosBanco: MovimentoFinanceiro[];
@@ -113,6 +122,7 @@ export const STORAGE_KEYS = {
   vendas: 'chocogest_vendas',
   producoes: 'chocogest_producoes',
   cartoes: 'chocogest_cartoes',
+  bancos: 'chocogest_bancos',
   patrimonio: 'chocogest_patrimonio',
   caixa: 'chocogest_caixa',
   banco: 'chocogest_banco',
@@ -124,6 +134,7 @@ export const EMPTY_DATA: AppData = {
   vendas: [],
   producoes: [],
   cartoes: [{ id: 1, nome: 'Cartão Principal', limite: 5000 }],
+  bancos: [{ id: 1, nome: 'Banco Principal' }],
   patrimonio: [],
   movimentosCaixa: [],
   movimentosBanco: [],

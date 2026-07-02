@@ -136,23 +136,44 @@ export function gerarPdfFinanceiro(data: AppData, tipo: 'caixa' | 'banco') {
   const entradas = sumBy(movimentos.filter((m) => m.tipo === 'entrada'), (m) => m.valor);
   const saidas = sumBy(movimentos.filter((m) => m.tipo === 'saida'), (m) => m.valor);
 
-  const rows = movimentos.map((m) => [
-    formatDate(m.data),
-    m.descricao,
-    m.categoria,
-    m.tipo === 'entrada' ? 'Entrada' : 'Saída',
-    formatCurrency(m.valor),
-  ]);
+  const isBanco = tipo === 'banco';
+
+  const rows = movimentos.map((m) =>
+    isBanco
+      ? [
+          formatDate(m.data),
+          m.banco ?? '—',
+          m.descricao,
+          m.categoria,
+          m.tipo === 'entrada' ? 'Entrada' : 'Saída',
+          formatCurrency(m.valor),
+        ]
+      : [
+          formatDate(m.data),
+          m.descricao,
+          m.categoria,
+          m.tipo === 'entrada' ? 'Entrada' : 'Saída',
+          formatCurrency(m.valor),
+        ]
+  );
 
   autoTable(doc, {
     startY: 52,
-    head: [['Data', 'Descrição', 'Categoria', 'Tipo', 'Valor']],
+    head: isBanco
+      ? [['Data', 'Banco', 'Descrição', 'Categoria', 'Tipo', 'Valor']]
+      : [['Data', 'Descrição', 'Categoria', 'Tipo', 'Valor']],
     body: rows,
-    foot: [
-      ['', '', '', 'Entradas', formatCurrency(entradas)],
-      ['', '', '', 'Saídas', formatCurrency(saidas)],
-      ['', '', '', 'Saldo', formatCurrency(entradas - saidas)],
-    ],
+    foot: isBanco
+      ? [
+          ['', '', '', '', 'Entradas', formatCurrency(entradas)],
+          ['', '', '', '', 'Saídas', formatCurrency(saidas)],
+          ['', '', '', '', 'Saldo', formatCurrency(entradas - saidas)],
+        ]
+      : [
+          ['', '', '', 'Entradas', formatCurrency(entradas)],
+          ['', '', '', 'Saídas', formatCurrency(saidas)],
+          ['', '', '', 'Saldo', formatCurrency(entradas - saidas)],
+        ],
     theme: 'grid',
     headStyles: { fillColor: [180, 83, 9] },
     footStyles: { fillColor: [254, 243, 199], textColor: [60, 40, 30], fontStyle: 'bold' },
