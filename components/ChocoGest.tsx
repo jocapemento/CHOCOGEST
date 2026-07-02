@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import type {
   AppData,
   CartaoModel,
@@ -15,7 +15,7 @@ import type {
 } from '@/lib/types';
 import { EMPTY_DATA, TIPOS_ITEM } from '@/lib/types';
 import { loadAppData, saveAppData, exportBackup, parseBackupFile } from '@/lib/storage';
-import { agruparEstoque } from '@/lib/estoque';
+import { agruparEstoque, catalogoItensLancados } from '@/lib/estoque';
 import { formatCurrency, formatDate, nextId, sumBy, todayISO } from '@/lib/format';
 import {
   gerarPdfCompras,
@@ -433,6 +433,11 @@ export default function ChocoGest() {
 
   const update = useCallback((fn: (prev: AppData) => AppData) => setData(fn), []);
 
+  const catalogoItensCompra = useMemo(
+    () => catalogoItensLancados(data.compras, data.estoque),
+    [data.compras, data.estoque]
+  );
+
   // --- Handlers ---
   const adicionarItemEstoque = () => {
     if (!novoItem.nome.trim()) return alert('Informe o nome do item.');
@@ -449,6 +454,21 @@ export default function ChocoGest() {
   const removerItemEstoque = (id: number) => {
     if (!confirm('Remover este item do estoque?')) return;
     update((prev) => ({ ...prev, estoque: prev.estoque.filter((e) => e.id !== id) }));
+  };
+
+  const preencherItemCompra = (nome: string) => {
+    const item = catalogoItensCompra.find((i) => i.nome.toLowerCase() === nome.toLowerCase());
+    if (item) {
+      setItemCompra({
+        nome: item.nome,
+        tipo: item.tipo,
+        quantidade: itemCompra.quantidade || 1,
+        unidade: item.unidade,
+        valorUnit: item.valorUnit,
+      });
+      return;
+    }
+    setItemCompra({ ...itemCompra, nome });
   };
 
   const adicionarItemCompra = () => {
@@ -1166,7 +1186,18 @@ export default function ChocoGest() {
                   Itens do tipo <strong>Equipamento</strong> vão para o Patrimônio (não para o Estoque).
                 </p>
                 <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-3">
-                  <input placeholder="Nome" className={inputCls} value={itemCompra.nome} onChange={(e) => setItemCompra({ ...itemCompra, nome: e.target.value })} />
+                  <input
+                    placeholder="Nome"
+                    list="itens-compra-cadastrados"
+                    className={inputCls}
+                    value={itemCompra.nome}
+                    onChange={(e) => preencherItemCompra(e.target.value)}
+                  />
+                  <datalist id="itens-compra-cadastrados">
+                    {catalogoItensCompra.map((item) => (
+                      <option key={item.nome} value={item.nome} />
+                    ))}
+                  </datalist>
                   <select className={inputCls} value={itemCompra.tipo} onChange={(e) => setItemCompra({ ...itemCompra, tipo: e.target.value as TipoItem })}>
                     {TIPOS_ITEM.map((t) => <option key={t} value={t}>{t}</option>)}
                   </select>
