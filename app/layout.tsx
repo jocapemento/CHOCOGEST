@@ -12,11 +12,16 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
+
 export const metadata: Metadata = {
   title: "ChocoGest • Fábrica Bean-to-Bar",
   description: "Sistema de gestão para fábrica de chocolate artesanal - Bahia",
+  metadataBase: new URL(
+    basePath ? "https://jocapemento.github.io/CHOCOGEST" : "http://localhost:3000"
+  ),
   icons: {
-    icon: "/favicon.ico",
+    icon: `${basePath}/favicon.ico`,
   },
 };
 
