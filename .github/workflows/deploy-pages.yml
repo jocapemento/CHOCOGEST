@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -20,6 +20,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Configurar GitHub Pages
+        uses: actions/configure-pages@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -32,9 +35,23 @@ jobs:
         env:
           GITHUB_PAGES: "true"
 
-      - uses: actions/upload-pages-artifact@v3
+      - name: Verificar build
+        run: |
+          test -f out/index.html
+          test -f out/.nojekyll
+          grep -q "ChocoGest" out/index.html
+
+      - name: Publicar artefato (GitHub Actions)
+        uses: actions/upload-pages-artifact@v3
         with:
           path: ./out
+
+      - name: Guardar build para branch gh-pages
+        uses: actions/upload-artifact@v4
+        with:
+          name: chocogest-static
+          path: out
+          retention-days: 1
 
   deploy:
     needs: build
@@ -43,5 +60,26 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/deploy-pages@v4
+      - name: Deploy via GitHub Actions
         id: deployment
+        uses: actions/deploy-pages@v4
+
+  deploy-gh-pages:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Baixar build estatico
+        uses: actions/download-artifact@v4
+        with:
+          name: chocogest-static
+          path: out
+
+      - name: Publicar na branch gh-pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./out
+          publish_branch: gh-pages
+          force_orphan: true

@@ -1,36 +1,38 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# ChocoGest
 
-## Getting Started
+Sistema de gestão para fábrica de chocolate artesanal (bean-to-bar) — Bahia.
 
-First, run the development server:
+**App online:** https://jocapemento.github.io/CHOCOGEST/
+
+## Desenvolvimento local
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Abra http://localhost:3000
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Publicar no GitHub Pages
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+O workflow `.github/workflows/deploy-pages.yml` gera o site estático e publica de duas formas:
 
-## Learn More
+1. **GitHub Actions** (recomendado) — artefato do workflow
+2. **Branch `gh-pages`** — cópia automática do build
 
-To learn more about Next.js, take a look at the following resources:
+### Configuração (uma vez)
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Em **Settings → Pages → Build and deployment → Source**, escolha **uma** opção:
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+| Opção | Quando usar |
+|-------|-------------|
+| **GitHub Actions** | Preferencial — usa o job `deploy` |
+| **Deploy from a branch** → branch `gh-pages` / `/ (root)` | Alternativa — usa o job `deploy-gh-pages` |
 
-## Deploy on Vercel
+**Não use** “Deploy from a branch” com a branch `main` — isso publica o README em vez do app.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+### Validar antes do push
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```bash
+npm run check
+```
