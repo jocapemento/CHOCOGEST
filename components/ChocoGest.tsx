@@ -130,6 +130,87 @@ function atualizarEstoqueVenda(estoque: EstoqueItem[], itens: ItemMovimentacao[]
   return updated;
 }
 
+function reverterEstoqueCompra(estoque: EstoqueItem[], itens: ItemMovimentacao[]): EstoqueItem[] {
+  return atualizarEstoqueVenda(estoque, itens);
+}
+
+function removerPatrimonioCompra(patrimonio: PatrimonioItem[], compraId: number): PatrimonioItem[] {
+  const marker = `Compra #${compraId}`;
+  return patrimonio.filter((p) => !p.observacoes?.includes(marker));
+}
+
+function removerMovimentosCompra(
+  movCaixa: MovimentoFinanceiro[],
+  movBanco: MovimentoFinanceiro[],
+  compraId: number
+) {
+  const ref = `compra-${compraId}`;
+  return {
+    movCaixa: movCaixa.filter((m) => m.referencia !== ref),
+    movBanco: movBanco.filter((m) => m.referencia !== ref),
+  };
+}
+
+function aplicarMovimentoCompra(
+  movCaixa: MovimentoFinanceiro[],
+  movBanco: MovimentoFinanceiro[],
+  compra: Compra,
+  total: number,
+  dataOperacao: string
+) {
+  const desc = `Compra: ${compra.fornecedor}`;
+  let caixa = movCaixa;
+  let banco = movBanco;
+
+  if (compra.formaPagamento === 'Dinheiro') {
+    caixa = registrarMovimento(caixa, {
+      data: dataOperacao,
+      descricao: desc,
+      tipo: 'saida',
+      valor: total,
+      categoria: 'Compras',
+      referencia: `compra-${compra.id}`,
+    });
+  } else if (compra.formaPagamento === 'Pix' || compra.formaPagamento === 'Transferencia') {
+    banco = registrarMovimento(banco, {
+      data: dataOperacao,
+      descricao: desc,
+      tipo: 'saida',
+      valor: total,
+      categoria: 'Compras',
+      referencia: `compra-${compra.id}`,
+    });
+  }
+
+  return { movCaixa: caixa, movBanco: banco };
+}
+
+function reverterEfeitosCompra(prev: AppData, compra: Compra): AppData {
+  const itensEstoque = compra.itens.filter((i) => i.tipo !== 'Equipamento');
+  const { movCaixa, movBanco } = removerMovimentosCompra(
+    prev.movimentosCaixa,
+    prev.movimentosBanco,
+    compra.id
+  );
+
+  return {
+    ...prev,
+    estoque: reverterEstoqueCompra(prev.estoque, itensEstoque),
+    patrimonio: removerPatrimonioCompra(prev.patrimonio, compra.id),
+    movimentosCaixa: movCaixa,
+    movimentosBanco: movBanco,
+  };
+}
+
+const COMPRA_FORM_INICIAL = {
+  data: todayISO(),
+  fornecedor: '',
+  formaPagamento: 'Cartao',
+  cartaoId: 1,
+  parcelas: 1,
+  itens: [] as ItemMovimentacao[],
+};
+
 // Shared UI
 function SectionTitle({ children, action }: { children: React.ReactNode; action?: React.ReactNode }) {
   return (
@@ -214,14 +295,8 @@ export default function ChocoGest() {
     valorUnit: 0,
     data: todayISO(),
   });
-  const [novaCompra, setNovaCompra] = useState({
-    data: todayISO(),
-    fornecedor: '',
-    formaPagamento: 'Cartao',
-    cartaoId: 1,
-    parcelas: 1,
-    itens: [] as ItemMovimentacao[],
-  });
+  const [novaCompra, setNovaCompra] = useState({ ...COMPRA_FORM_INICIAL });
+  const [compraEditandoId, setCompraEditandoId] = useState<number | null>(null);
   const [itemCompra, setItemCompra] = useState({
     nome: '',
     tipo: 'MateriaPrima' as TipoItem,
@@ -322,6 +397,81 @@ export default function ChocoGest() {
     setItemCompra({ nome: '', tipo: 'MateriaPrima', quantidade: 1, unidade: 'kg', valorUnit: 0 });
   };
 
+  const removerItemCompraLista = (id: number) => {
+    setNovaCompra((p) => ({ ...p, itens: p.itens.filter((i) => i.id !== id) }));
+  };
+
+  const resetFormCompra = () => {
+    setNovaCompra({ ...COMPRA_FORM_INICIAL, data: todayISO() });
+    setItemCompra({ nome: '', tipo: 'MateriaPrima', quantidade: 1, unidade: 'kg', valorUnit: 0 });
+    setCompraEditandoId(null);
+  };
+
+  const cancelarEdicaoCompra = () => {
+    resetFormCompra();
+  };
+
+  const editarCompra = (compra: Compra) => {
+    const cartao = data.cartoes.find((c) => c.nome === compra.cartao);
+    setNovaCompra({
+      data: compra.data,
+      fornecedor: compra.fornecedor,
+      formaPagamento: compra.formaPagamento,
+      cartaoId: cartao?.id ?? data.cartoes[0]?.id ?? 1,
+      parcelas: compra.parcelas,
+      itens: compra.itens.map((i) => ({ ...i })),
+    });
+    setCompraEditandoId(compra.id);
+    setItemCompra({ nome: '', tipo: 'MateriaPrima', quantidade: 1, unidade: 'kg', valorUnit: 0 });
+  };
+
+  const removerCompra = (id: number) => {
+    if (
+      !confirm(
+        'Remover este lançamento de compra? O estoque, patrimônio e movimentos financeiros serão ajustados.'
+      )
+    ) {
+      return;
+    }
+
+    update((prev) => {
+      const compra = prev.compras.find((c) => c.id === id);
+      if (!compra) return prev;
+      const reverted = reverterEfeitosCompra(prev, compra);
+      return { ...reverted, compras: reverted.compras.filter((c) => c.id !== id) };
+    });
+
+    if (compraEditandoId === id) {
+      resetFormCompra();
+    }
+  };
+
+  const aplicarEfeitosCompra = (prev: AppData, compra: Compra, dataOperacao: string) => {
+    const itensEstoque = compra.itens.filter((i) => i.tipo !== 'Equipamento');
+    const novosPatrimonio = compraItensParaPatrimonio(
+      compra.itens,
+      prev.patrimonio,
+      dataOperacao,
+      compra.fornecedor,
+      compra.id
+    );
+    const { movCaixa, movBanco } = aplicarMovimentoCompra(
+      prev.movimentosCaixa,
+      prev.movimentosBanco,
+      compra,
+      compra.total,
+      dataOperacao
+    );
+
+    return {
+      ...prev,
+      estoque: atualizarEstoqueCompra(prev.estoque, itensEstoque),
+      patrimonio: [...prev.patrimonio, ...novosPatrimonio],
+      movimentosCaixa: movCaixa,
+      movimentosBanco: movBanco,
+    };
+  };
+
   const registrarCompra = () => {
     const fornecedor = novaCompra.fornecedor.trim();
     const itens: ItemMovimentacao[] = [...novaCompra.itens];
@@ -342,8 +492,10 @@ export default function ChocoGest() {
     const total = sumBy(itens, (i) => i.quantidade * i.valorUnit);
     const cartao = data.cartoes.find((c) => c.id === novaCompra.cartaoId);
     const dataOperacao = novaCompra.data || todayISO();
+    const editando = compraEditandoId !== null;
+
     const compra: Compra = {
-      id: nextId(data.compras),
+      id: editando ? compraEditandoId : nextId(data.compras),
       data: dataOperacao,
       fornecedor,
       formaPagamento: novaCompra.formaPagamento,
@@ -354,57 +506,32 @@ export default function ChocoGest() {
     };
 
     update((prev) => {
-      let movCaixa = prev.movimentosCaixa;
-      let movBanco = prev.movimentosBanco;
-      const desc = `Compra: ${compra.fornecedor}`;
+      if (editando) {
+        const antiga = prev.compras.find((c) => c.id === compraEditandoId);
+        if (!antiga) return prev;
 
-      if (compra.formaPagamento === 'Dinheiro') {
-        movCaixa = registrarMovimento(movCaixa, {
-          data: dataOperacao,
-          descricao: desc,
-          tipo: 'saida',
-          valor: total,
-          categoria: 'Compras',
-          referencia: `compra-${compra.id}`,
-        });
-      } else if (compra.formaPagamento === 'Pix' || compra.formaPagamento === 'Transferencia') {
-        movBanco = registrarMovimento(movBanco, {
-          data: dataOperacao,
-          descricao: desc,
-          tipo: 'saida',
-          valor: total,
-          categoria: 'Compras',
-          referencia: `compra-${compra.id}`,
-        });
+        let state = reverterEfeitosCompra(prev, antiga);
+        state = aplicarEfeitosCompra(state, compra, dataOperacao);
+
+        return {
+          ...state,
+          compras: state.compras.map((c) => (c.id === compraEditandoId ? compra : c)),
+        };
       }
 
-      const itensEstoque = compra.itens.filter((i) => i.tipo !== 'Equipamento');
-      const novosPatrimonio = compraItensParaPatrimonio(
-        compra.itens,
-        prev.patrimonio,
-        dataOperacao,
-        compra.fornecedor,
-        compra.id
-      );
-
-      return {
-        ...prev,
-        compras: [...prev.compras, compra],
-        estoque: atualizarEstoqueCompra(prev.estoque, itensEstoque),
-        patrimonio: [...prev.patrimonio, ...novosPatrimonio],
-        movimentosCaixa: movCaixa,
-        movimentosBanco: movBanco,
-      };
+      const state = aplicarEfeitosCompra(prev, compra, dataOperacao);
+      return { ...state, compras: [...state.compras, compra] };
     });
 
     const qtdEquipamento = itens.filter((i) => i.tipo === 'Equipamento').length;
 
-    setNovaCompra({ data: todayISO(), fornecedor: '', formaPagamento: 'Cartao', cartaoId: 1, parcelas: 1, itens: [] });
-    setItemCompra({ nome: '', tipo: 'MateriaPrima', quantidade: 1, unidade: 'kg', valorUnit: 0 });
+    resetFormCompra();
     alert(
-      qtdEquipamento > 0
-        ? `Compra registrada! ${qtdEquipamento} equipamento(s) adicionado(s) ao Patrimônio.`
-        : 'Compra registrada com sucesso!'
+      editando
+        ? 'Compra atualizada com sucesso!'
+        : qtdEquipamento > 0
+          ? `Compra registrada! ${qtdEquipamento} equipamento(s) adicionado(s) ao Patrimônio.`
+          : 'Compra registrada com sucesso!'
     );
   };
 
@@ -830,6 +957,11 @@ export default function ChocoGest() {
             <div>
               <SectionTitle action={<Btn variant="secondary" onClick={() => gerarPdfCompras(data)}>📄 PDF</Btn>}>Compras</SectionTitle>
               <Card className="mb-6">
+                {compraEditandoId !== null && (
+                  <p className="text-amber-300 text-sm mb-4">
+                    Editando compra #{compraEditandoId}
+                  </p>
+                )}
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-4">
                   <DateField
                     label="Data da compra"
@@ -883,33 +1015,60 @@ export default function ChocoGest() {
                 {novaCompra.itens.length > 0 && (
                   <div className="mt-4 text-sm space-y-1">
                     {novaCompra.itens.map((i) => (
-                      <div key={i.id} className="flex justify-between text-amber-200">
+                      <div key={i.id} className="flex justify-between items-center text-amber-200 gap-2">
                         <span>{i.nome} — {i.quantidade} {i.unidade}</span>
-                        <span>{formatCurrency(i.quantidade * i.valorUnit)}</span>
+                        <div className="flex items-center gap-2">
+                          <span>{formatCurrency(i.quantidade * i.valorUnit)}</span>
+                          <Btn variant="danger" className="px-2 py-1" onClick={() => removerItemCompraLista(i.id)}>✕</Btn>
+                        </div>
                       </div>
                     ))}
                     <div className="font-bold pt-2">Total: {formatCurrency(sumBy(novaCompra.itens, (i) => i.quantidade * i.valorUnit))}</div>
                   </div>
                 )}
-                <Btn className="mt-4" onClick={registrarCompra}>Registrar Compra</Btn>
+                <div className="flex flex-wrap gap-2 mt-4">
+                  <Btn onClick={registrarCompra}>
+                    {compraEditandoId !== null ? 'Salvar alterações' : 'Registrar Compra'}
+                  </Btn>
+                  {compraEditandoId !== null && (
+                    <Btn variant="secondary" onClick={cancelarEdicaoCompra}>Cancelar</Btn>
+                  )}
+                </div>
               </Card>
               <Card>
-                <table className="w-full text-sm">
-                  <thead><tr className="text-amber-300 border-b border-amber-700">
-                    <th className="text-left py-2">Data</th><th className="text-left py-2">Fornecedor</th>
-                    <th className="text-left py-2">Pagamento</th><th className="text-right py-2">Total</th>
-                  </tr></thead>
-                  <tbody>
-                    {data.compras.slice().reverse().map((c) => (
-                      <tr key={c.id} className="border-b border-amber-800/30">
-                        <td className="py-2">{formatDate(c.data)}</td>
-                        <td className="py-2">{c.fornecedor}</td>
-                        <td className="py-2">{c.formaPagamento}{c.cartao ? ` (${c.cartao})` : ''}</td>
-                        <td className="py-2 text-right">{formatCurrency(c.total)}</td>
+                <h4 className="text-amber-200 font-medium mb-4">Histórico de compras</h4>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm min-w-[640px]">
+                    <thead>
+                      <tr className="text-amber-300 border-b border-amber-700">
+                        <th className="text-left py-2">Data</th>
+                        <th className="text-left py-2">Fornecedor</th>
+                        <th className="text-left py-2">Pagamento</th>
+                        <th className="text-right py-2">Total</th>
+                        <th className="text-right py-2 w-32">Ações</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {data.compras.slice().reverse().map((c) => (
+                        <tr
+                          key={c.id}
+                          className={`border-b border-amber-800/30 ${compraEditandoId === c.id ? 'bg-amber-900/30' : ''}`}
+                        >
+                          <td className="py-2">{formatDate(c.data)}</td>
+                          <td className="py-2">{c.fornecedor}</td>
+                          <td className="py-2">{c.formaPagamento}{c.cartao ? ` (${c.cartao})` : ''}</td>
+                          <td className="py-2 text-right">{formatCurrency(c.total)}</td>
+                          <td className="py-2 text-right whitespace-nowrap">
+                            <Btn variant="secondary" onClick={() => editarCompra(c)}>Editar</Btn>
+                            {' '}
+                            <Btn variant="danger" onClick={() => removerCompra(c.id)}>Excluir</Btn>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {data.compras.length === 0 && <p className="text-amber-400/60 py-4">Nenhuma compra registrada.</p>}
               </Card>
             </div>
           )}
