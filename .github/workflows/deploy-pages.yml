@@ -7,21 +7,16 @@ on:
 
 permissions:
   contents: write
-  pages: write
-  id-token: write
 
 concurrency:
   group: pages
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
-  build:
+  deploy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Configurar GitHub Pages
-        uses: actions/configure-pages@v4
 
       - uses: actions/setup-node@v4
         with:
@@ -40,41 +35,6 @@ jobs:
           test -f out/index.html
           test -f out/.nojekyll
           grep -q "ChocoGest" out/index.html
-
-      - name: Publicar artefato (GitHub Actions)
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: ./out
-
-      - name: Guardar build para branch gh-pages
-        uses: actions/upload-artifact@v4
-        with:
-          name: chocogest-static
-          path: out
-          retention-days: 1
-
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - name: Deploy via GitHub Actions
-        id: deployment
-        uses: actions/deploy-pages@v4
-
-  deploy-gh-pages:
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Baixar build estatico
-        uses: actions/download-artifact@v4
-        with:
-          name: chocogest-static
-          path: out
 
       - name: Publicar na branch gh-pages
         uses: peaceiris/actions-gh-pages@v4

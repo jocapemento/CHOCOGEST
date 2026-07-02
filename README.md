@@ -15,21 +15,19 @@ Abra http://localhost:3000
 
 ## Publicar no GitHub Pages
 
-O workflow `.github/workflows/deploy-pages.yml` gera o site estático e publica de duas formas:
-
-1. **GitHub Actions** (recomendado) — artefato do workflow
-2. **Branch `gh-pages`** — cópia automática do build
+O workflow `.github/workflows/deploy-pages.yml` gera o site estático e publica na branch **`gh-pages`**.
 
 ### Configuração (uma vez)
 
-Em **Settings → Pages → Build and deployment → Source**, escolha **uma** opção:
+1. Abra **Settings → Pages → Build and deployment**
+2. Em **Source**, escolha **Deploy from a branch**
+3. Branch: **`gh-pages`**
+4. Pasta: **`/ (root)`**
+5. Salve e aguarde 1–3 minutos
 
-| Opção | Quando usar |
-|-------|-------------|
-| **GitHub Actions** | Preferencial — usa o job `deploy` |
-| **Deploy from a branch** → branch `gh-pages` / `/ (root)` | Alternativa — usa o job `deploy-gh-pages` |
+**Não use** a branch `main` como fonte — isso publica o README em vez do app.
 
-**Não use** “Deploy from a branch” com a branch `main` — isso publica o README em vez do app.
+**Não use** “GitHub Actions” como fonte neste projeto — o deploy via artefato falhou com 404; a branch `gh-pages` é o caminho estável.
 
 ### Validar antes do push
 
