@@ -23,7 +23,7 @@ import {
   valorParcelaNoMes,
 } from '@/lib/cartoes';
 import { agruparEstoque, catalogoItensLancados } from '@/lib/estoque';
-import { formatCurrency, formatDate, formatMesAno, nextId, sumBy, todayISO } from '@/lib/format';
+import { formatCurrency, formatDate, formatMesAno, mesAtualISO, nextId, sumBy, todayISO } from '@/lib/format';
 import {
   gerarPdfCompras,
   gerarPdfDashboard,
@@ -446,7 +446,7 @@ export default function ChocoGest() {
   );
   const parcelasMensais = useMemo(() => calcularParcelasMensais(data.compras), [data.compras]);
   const mesesParcelas = useMemo(() => mesesComParcelas(parcelasMensais), [parcelasMensais]);
-  const mesAtual = todayISO().slice(0, 7);
+  const mesAtual = mesAtualISO();
 
   // --- Handlers ---
   const adicionarItemEstoque = () => {
