@@ -23,8 +23,6 @@ body {
 
 .bg-chocolate {
   background-color: var(--background);
-  background-image: linear-gradient(rgba(44, 33, 24, 0.92), rgba(44, 33, 24, 0.95)),
-    url('/chocolate-bg.jpeg');
   background-size: cover;
   background-position: center;
   background-attachment: fixed;

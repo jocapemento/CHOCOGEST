@@ -149,6 +149,11 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 const inputCls =
   'w-full bg-[#2c2118] border border-amber-700/60 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-amber-500';
 
+const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? '';
+const chocolateBgStyle: React.CSSProperties = {
+  backgroundImage: `linear-gradient(rgba(44, 33, 24, 0.92), rgba(44, 33, 24, 0.95)), url('${basePath}/chocolate-bg.jpeg')`,
+};
+
 export default function ChocoGest() {
   const [activeTab, setActiveTab] = useState<TabId>('dashboard');
   const [data, setData] = useState<AppData>(EMPTY_DATA);
@@ -541,7 +546,7 @@ export default function ChocoGest() {
   }
 
   return (
-    <div className="min-h-screen bg-chocolate text-white">
+    <div className="min-h-screen bg-chocolate text-white" style={chocolateBgStyle}>
       <header className="bg-amber-950/90 backdrop-blur py-5 border-b border-amber-700 sticky top-0 z-10">
         <div className="max-w-7xl mx-auto px-6 flex items-center justify-between gap-4 flex-wrap">
           <div className="flex items-center gap-4">
