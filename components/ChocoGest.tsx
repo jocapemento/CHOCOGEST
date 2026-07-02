@@ -15,8 +15,15 @@ import type {
 } from '@/lib/types';
 import { EMPTY_DATA, TIPOS_ITEM } from '@/lib/types';
 import { loadAppData, saveAppData, exportBackup, parseBackupFile } from '@/lib/storage';
+import {
+  calcularParcelasMensais,
+  mesesComParcelas,
+  totalParcelasCartao,
+  totalParcelasMes,
+  valorParcelaNoMes,
+} from '@/lib/cartoes';
 import { agruparEstoque, catalogoItensLancados } from '@/lib/estoque';
-import { formatCurrency, formatDate, nextId, sumBy, todayISO } from '@/lib/format';
+import { formatCurrency, formatDate, formatMesAno, nextId, sumBy, todayISO } from '@/lib/format';
 import {
   gerarPdfCompras,
   gerarPdfDashboard,
@@ -437,6 +444,9 @@ export default function ChocoGest() {
     () => catalogoItensLancados(data.compras, data.estoque),
     [data.compras, data.estoque]
   );
+  const parcelasMensais = useMemo(() => calcularParcelasMensais(data.compras), [data.compras]);
+  const mesesParcelas = useMemo(() => mesesComParcelas(parcelasMensais), [parcelasMensais]);
+  const mesAtual = todayISO().slice(0, 7);
 
   // --- Handlers ---
   const adicionarItemEstoque = () => {
@@ -1478,19 +1488,25 @@ export default function ChocoGest() {
                 </div>
                 <Btn className="mt-4" onClick={adicionarCartao}>Adicionar Cartão</Btn>
               </Card>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
                 {data.cartoes.map((c: CartaoModel) => {
                   const gastoCartao = sumBy(
                     data.compras.filter((comp) => comp.cartao === c.nome),
                     (comp) => comp.total
                   );
+                  const parcelaMesAtual = valorParcelaNoMes(parcelasMensais, mesAtual, c.nome);
+                  const totalParcelado = totalParcelasCartao(parcelasMensais, c.nome);
                   return (
                     <Card key={c.id}>
                       <div className="flex justify-between items-start">
-                        <div>
+                        <div className="flex-1">
                           <div className="text-lg font-bold">{c.nome}</div>
                           <div className="text-amber-300 text-sm">Limite: {formatCurrency(c.limite ?? 0)}</div>
-                          <div className="text-amber-300 text-sm">Gasto: {formatCurrency(gastoCartao)}</div>
+                          <div className="text-amber-300 text-sm">Gasto total: {formatCurrency(gastoCartao)}</div>
+                          <div className="text-amber-300 text-sm">
+                            Parcela em {formatMesAno(mesAtual)}: {formatCurrency(parcelaMesAtual)}
+                          </div>
+                          <div className="text-amber-300 text-sm">Total parcelado: {formatCurrency(totalParcelado)}</div>
                         </div>
                         <Btn variant="danger" onClick={() => removerCartao(c.id)}>✕</Btn>
                       </div>
@@ -1498,6 +1514,57 @@ export default function ChocoGest() {
                   );
                 })}
               </div>
+              <Card>
+                <h4 className="text-amber-200 font-medium mb-4">Soma das parcelas por cartão e por mês</h4>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm min-w-[480px]">
+                    <thead>
+                      <tr className="text-amber-300 border-b border-amber-700">
+                        <th className="text-left py-2">Mês</th>
+                        {data.cartoes.map((c) => (
+                          <th key={c.id} className="text-right py-2">{c.nome}</th>
+                        ))}
+                        <th className="text-right py-2">Total</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {mesesParcelas.map((mes) => (
+                        <tr
+                          key={mes}
+                          className={`border-b border-amber-800/30 ${mes === mesAtual ? 'bg-amber-900/30' : ''}`}
+                        >
+                          <td className="py-2">{formatMesAno(mes)}</td>
+                          {data.cartoes.map((c) => {
+                            const valor = valorParcelaNoMes(parcelasMensais, mes, c.nome);
+                            return (
+                              <td key={c.id} className="py-2 text-right text-amber-200">
+                                {valor > 0 ? formatCurrency(valor) : '—'}
+                              </td>
+                            );
+                          })}
+                          <td className="py-2 text-right font-medium">{formatCurrency(totalParcelasMes(parcelasMensais, mes))}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="font-bold text-amber-100 border-t border-amber-700">
+                        <td className="py-3">Total por cartão</td>
+                        {data.cartoes.map((c) => (
+                          <td key={c.id} className="py-3 text-right">
+                            {formatCurrency(totalParcelasCartao(parcelasMensais, c.nome))}
+                          </td>
+                        ))}
+                        <td className="py-3 text-right">
+                          {formatCurrency(sumBy(parcelasMensais, (p) => p.valor))}
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+                {mesesParcelas.length === 0 && (
+                  <p className="text-amber-400/60 py-4">Nenhuma compra parcelada no cartão registrada.</p>
+                )}
+              </Card>
             </div>
           )}
 

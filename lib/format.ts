@@ -11,6 +11,15 @@ export function formatDate(date: string): string {
   return `${d}/${m}/${y}`;
 }
 
+const MESES_CURTOS = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+
+export function formatMesAno(mesISO: string): string {
+  const [y, m] = mesISO.split('-');
+  const idx = Number(m) - 1;
+  if (!y || idx < 0 || idx > 11) return mesISO;
+  return `${MESES_CURTOS[idx]}/${y}`;
+}
+
 export function todayISO(): string {
   return new Date().toISOString().slice(0, 10);
 }
