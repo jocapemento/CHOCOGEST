@@ -1378,16 +1378,22 @@ export default function ChocoGest() {
                   <Field label="Unidade"><input className={inputCls} value={novaProducao.unidade} onChange={(e) => setNovaProducao((p) => ({ ...p, unidade: e.target.value }))} /></Field>
                 </div>
                 <h4 className="text-amber-200 mb-2">Ingredientes</h4>
-                <div className="grid grid-cols-3 gap-3 mb-3">
-                  <select className={inputCls} value={ingredienteForm.nome} onChange={(e) => {
-                    const item = saldoEstoque.find((i) => i.nome === e.target.value);
-                    setIngredienteForm({ nome: e.target.value, quantidade: 0, valorUnit: item?.valorUnit ?? 0 });
-                  }}>
-                    <option value="">Ingrediente...</option>
-                    {saldoEstoque.filter((e) => e.tipo === 'MateriaPrima').map((e) => <option key={e.nome} value={e.nome}>{e.nome} ({e.quantidade} {e.unidade})</option>)}
-                  </select>
-                  <input type="number" placeholder="Qtd" className={inputCls} value={ingredienteForm.quantidade} onChange={(e) => setIngredienteForm({ ...ingredienteForm, quantidade: +e.target.value })} />
-                  <input type="number" step="0.01" placeholder="R$/un" className={inputCls} value={ingredienteForm.valorUnit} onChange={(e) => setIngredienteForm({ ...ingredienteForm, valorUnit: +e.target.value })} />
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
+                  <Field label="Ingrediente">
+                    <select className={inputCls} value={ingredienteForm.nome} onChange={(e) => {
+                      const item = saldoEstoque.find((i) => i.nome === e.target.value);
+                      setIngredienteForm({ nome: e.target.value, quantidade: 0, valorUnit: item?.valorUnit ?? 0 });
+                    }}>
+                      <option value="">Selecione...</option>
+                      {saldoEstoque.filter((e) => e.tipo === 'MateriaPrima').map((e) => <option key={e.nome} value={e.nome}>{e.nome} ({e.quantidade} {e.unidade})</option>)}
+                    </select>
+                  </Field>
+                  <Field label="Quantidade">
+                    <input type="number" className={inputCls} value={ingredienteForm.quantidade} onChange={(e) => setIngredienteForm({ ...ingredienteForm, quantidade: +e.target.value })} />
+                  </Field>
+                  <Field label="Valor Unitário (R$)">
+                    <input type="number" step="0.01" className={inputCls} value={ingredienteForm.valorUnit} onChange={(e) => setIngredienteForm({ ...ingredienteForm, valorUnit: +e.target.value })} />
+                  </Field>
                 </div>
                 <Btn variant="secondary" onClick={adicionarIngrediente}>+ Ingrediente</Btn>
                 {novaProducao.ingredientes.length > 0 && (
