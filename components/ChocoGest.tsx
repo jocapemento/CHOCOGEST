@@ -15,6 +15,7 @@ import type {
 } from '@/lib/types';
 import { EMPTY_DATA, TIPOS_ITEM } from '@/lib/types';
 import { loadAppData, saveAppData, exportBackup, parseBackupFile } from '@/lib/storage';
+import { agruparEstoque } from '@/lib/estoque';
 import { formatCurrency, formatDate, nextId, sumBy, todayISO } from '@/lib/format';
 import {
   gerarPdfCompras,
@@ -90,44 +91,47 @@ function compraItensParaPatrimonio(
   return novos;
 }
 
-function atualizarEstoqueCompra(estoque: EstoqueItem[], itens: ItemMovimentacao[]): EstoqueItem[] {
+function atualizarEstoqueCompra(
+  estoque: EstoqueItem[],
+  itens: ItemMovimentacao[],
+  dataOperacao?: string
+): EstoqueItem[] {
   const updated = [...estoque];
+  const data = dataOperacao ?? todayISO();
+
   for (const item of itens) {
-    const idx = updated.findIndex((e) => e.nome.toLowerCase() === item.nome.toLowerCase());
-    if (idx >= 0) {
-      const qtd = updated[idx].quantidade + item.quantidade;
-      const valorMedio =
-        qtd > 0
-          ? (updated[idx].quantidade * updated[idx].valorUnit + item.quantidade * item.valorUnit) / qtd
-          : item.valorUnit;
-      updated[idx] = { ...updated[idx], quantidade: qtd, valorUnit: valorMedio };
-    } else {
-      updated.push({
-        id: nextId(updated),
-        nome: item.nome,
-        tipo: item.tipo,
-        quantidade: item.quantidade,
-        unidade: item.unidade,
-        valorUnit: item.valorUnit,
-        data: todayISO(),
-      });
-    }
+    updated.push({
+      id: nextId(updated),
+      nome: item.nome,
+      tipo: item.tipo,
+      quantidade: item.quantidade,
+      unidade: item.unidade,
+      valorUnit: item.valorUnit,
+      data,
+    });
   }
+
   return updated;
 }
 
 function atualizarEstoqueVenda(estoque: EstoqueItem[], itens: ItemMovimentacao[]): EstoqueItem[] {
-  const updated = [...estoque];
+  const updated = estoque.map((e) => ({ ...e }));
+
   for (const item of itens) {
-    const idx = updated.findIndex((e) => e.nome.toLowerCase() === item.nome.toLowerCase());
-    if (idx >= 0) {
-      updated[idx] = {
-        ...updated[idx],
-        quantidade: Math.max(0, updated[idx].quantidade - item.quantidade),
-      };
+    let restante = item.quantidade;
+
+    for (let i = 0; i < updated.length && restante > 0; i++) {
+      if (updated[i].nome.toLowerCase() !== item.nome.toLowerCase() || updated[i].quantidade <= 0) {
+        continue;
+      }
+
+      const baixa = Math.min(updated[i].quantidade, restante);
+      updated[i] = { ...updated[i], quantidade: updated[i].quantidade - baixa };
+      restante -= baixa;
     }
   }
-  return updated;
+
+  return updated.filter((e) => e.quantidade > 0);
 }
 
 function reverterEstoqueCompra(estoque: EstoqueItem[], itens: ItemMovimentacao[]): EstoqueItem[] {
@@ -529,7 +533,7 @@ export default function ChocoGest() {
 
     return {
       ...prev,
-      estoque: atualizarEstoqueCompra(prev.estoque, itensEstoque),
+      estoque: atualizarEstoqueCompra(prev.estoque, itensEstoque, dataOperacao),
       patrimonio: [...prev.patrimonio, ...novosPatrimonio],
       movimentosCaixa: movCaixa,
       movimentosBanco: movBanco,
@@ -600,15 +604,19 @@ export default function ChocoGest() {
   };
 
   const adicionarItemVenda = () => {
-    const estoqueItem = data.estoque.find((e) => e.nome.toLowerCase() === itemVenda.nome.toLowerCase());
-    if (!estoqueItem) return alert('Item não encontrado no estoque.');
+    const saldo = agruparEstoque(data.estoque).find((e) => e.nome.toLowerCase() === itemVenda.nome.toLowerCase());
+    if (!saldo) return alert('Item não encontrado no estoque.');
+    if (itemVenda.quantidade <= 0) return alert('Informe uma quantidade válida.');
+    if (itemVenda.quantidade > saldo.quantidade) {
+      return alert(`Quantidade indisponível. Saldo atual: ${saldo.quantidade} ${saldo.unidade}.`);
+    }
     const item: ItemMovimentacao = {
       id: nextId(novaVenda.itens),
-      nome: estoqueItem.nome,
-      tipo: estoqueItem.tipo,
+      nome: saldo.nome,
+      tipo: saldo.tipo,
       quantidade: itemVenda.quantidade,
-      unidade: estoqueItem.unidade,
-      valorUnit: itemVenda.valorUnit || estoqueItem.valorUnit,
+      unidade: saldo.unidade,
+      valorUnit: itemVenda.valorUnit || saldo.valorUnit,
     };
     setNovaVenda((p) => ({ ...p, itens: [...p.itens, item] }));
     setItemVenda({ nome: '', quantidade: 1, valorUnit: 0 });
@@ -759,16 +767,20 @@ export default function ChocoGest() {
         ]);
       }
       const custoUnit = producao.quantidade > 0 ? custoEstimado / producao.quantidade : custoEstimado;
-      estoque = atualizarEstoqueCompra(estoque, [
-        {
-          id: 0,
-          nome: producao.produto,
-          tipo: 'ProdutoAcabado',
-          quantidade: producao.quantidade,
-          unidade: producao.unidade,
-          valorUnit: custoUnit,
-        },
-      ]);
+      estoque = atualizarEstoqueCompra(
+        estoque,
+        [
+          {
+            id: 0,
+            nome: producao.produto,
+            tipo: 'ProdutoAcabado',
+            quantidade: producao.quantidade,
+            unidade: producao.unidade,
+            valorUnit: custoUnit,
+          },
+        ],
+        producao.data
+      );
 
       return { ...prev, producoes: [...prev.producoes, producao], estoque };
     });
@@ -863,11 +875,18 @@ export default function ChocoGest() {
   };
 
   // Derived
-  const valorEstoque = sumBy(data.estoque, (i) => i.quantidade * i.valorUnit);
+  const saldoEstoque = agruparEstoque(data.estoque);
+  const valorEstoque = sumBy(saldoEstoque, (i) => i.quantidade * i.valorUnit);
+  const lancamentosEstoque = [...data.estoque]
+    .filter((e) => e.quantidade > 0)
+    .sort((a, b) => {
+      const dataCmp = (b.data ?? '').localeCompare(a.data ?? '');
+      return dataCmp !== 0 ? dataCmp : b.id - a.id;
+    });
   const saldoCaixa = calcSaldo(data.movimentosCaixa);
   const saldoBanco = calcSaldo(data.movimentosBanco);
   const valorPatrimonio = sumBy(data.patrimonio, (p) => p.valorAtual);
-  const produtosAcabados = data.estoque.filter((e) => e.tipo === 'ProdutoAcabado');
+  const produtosAcabados = saldoEstoque.filter((e) => e.tipo === 'ProdutoAcabado');
   const produtoSelecionado = produtosAcabados.find((p) => p.nome === produtoPreco);
   const custoProduto = produtoSelecionado ? produtoSelecionado.valorUnit : 0;
   const precoSugerido = custoProduto * (1 + margemLucro / 100);
@@ -954,7 +973,7 @@ export default function ChocoGest() {
                   { label: 'Patrimônio', value: formatCurrency(valorPatrimonio), icon: '🏛️' },
                   { label: 'Compras', value: formatCurrency(sumBy(data.compras, (c) => c.total)), icon: '🚚' },
                   { label: 'Produções', value: data.producoes.length.toString(), icon: '🏭' },
-                  { label: 'Itens Estoque', value: data.estoque.length.toString(), icon: '📋' },
+                  { label: 'Itens Estoque', value: saldoEstoque.length.toString(), icon: '📋' },
                 ].map((kpi) => (
                   <Card key={kpi.label}>
                     <div className="text-2xl mb-1">{kpi.icon}</div>
@@ -1020,11 +1039,49 @@ export default function ChocoGest() {
                     <input type="number" step="0.01" className={inputCls} value={novoItem.valorUnit} onChange={(e) => setNovoItem((p) => ({ ...p, valorUnit: +e.target.value }))} />
                   </Field>
                 </div>
+                <p className="text-amber-400/70 text-xs mt-2">
+                  Cada inclusão gera um lançamento na lista. O saldo disponível é a soma dos lançamentos por item.
+                </p>
                 <Btn className="mt-4" onClick={adicionarItemEstoque}>Adicionar ao Estoque</Btn>
               </Card>
-              <Card>
+              <Card className="mb-6">
+                <h4 className="text-amber-200 font-medium mb-4">Saldo disponível</h4>
                 <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
+                  <table className="w-full text-sm min-w-[560px]">
+                    <thead>
+                      <tr className="text-amber-300 border-b border-amber-700">
+                        <th className="text-left py-2">Nome</th>
+                        <th className="text-left py-2">Tipo</th>
+                        <th className="text-right py-2">Qtd Total</th>
+                        <th className="text-right py-2">Valor Médio</th>
+                        <th className="text-right py-2">Total</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {saldoEstoque.map((item) => (
+                        <tr key={item.nome} className="border-b border-amber-800/30">
+                          <td className="py-2">{item.nome}</td>
+                          <td className="py-2 text-amber-300">{item.tipo}</td>
+                          <td className="py-2 text-right">{item.quantidade} {item.unidade}</td>
+                          <td className="py-2 text-right">{formatCurrency(item.valorUnit)}</td>
+                          <td className="py-2 text-right">{formatCurrency(item.quantidade * item.valorUnit)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="font-bold text-amber-100">
+                        <td colSpan={4} className="py-3 text-right">Valor total em estoque:</td>
+                        <td className="py-3 text-right">{formatCurrency(valorEstoque)}</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                  {saldoEstoque.length === 0 && <p className="text-amber-400/60 py-4">Nenhum saldo disponível.</p>}
+                </div>
+              </Card>
+              <Card>
+                <h4 className="text-amber-200 font-medium mb-4">Lançamentos</h4>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm min-w-[640px]">
                     <thead>
                       <tr className="text-amber-300 border-b border-amber-700">
                         <th className="text-left py-2">Data</th>
@@ -1037,7 +1094,7 @@ export default function ChocoGest() {
                       </tr>
                     </thead>
                     <tbody>
-                      {data.estoque.map((item) => (
+                      {lancamentosEstoque.map((item) => (
                         <tr key={item.id} className="border-b border-amber-800/30">
                           <td className="py-2 text-amber-300">{formatDate(item.data ?? '')}</td>
                           <td className="py-2">{item.nome}</td>
@@ -1051,15 +1108,8 @@ export default function ChocoGest() {
                         </tr>
                       ))}
                     </tbody>
-                    <tfoot>
-                      <tr className="font-bold text-amber-100">
-                        <td colSpan={5} className="py-3 text-right">Total Geral:</td>
-                        <td className="py-3 text-right">{formatCurrency(valorEstoque)}</td>
-                        <td></td>
-                      </tr>
-                    </tfoot>
                   </table>
-                  {data.estoque.length === 0 && <p className="text-amber-400/60 py-4">Estoque vazio.</p>}
+                  {lancamentosEstoque.length === 0 && <p className="text-amber-400/60 py-4">Nenhum lançamento registrado.</p>}
                 </div>
               </Card>
             </div>
@@ -1214,7 +1264,7 @@ export default function ChocoGest() {
                 <div className="grid grid-cols-3 gap-3 mb-3">
                   <select className={inputCls} value={itemVenda.nome} onChange={(e) => setItemVenda({ ...itemVenda, nome: e.target.value })}>
                     <option value="">Selecione item...</option>
-                    {data.estoque.map((e) => <option key={e.id} value={e.nome}>{e.nome} ({e.quantidade} {e.unidade})</option>)}
+                    {saldoEstoque.map((e) => <option key={e.nome} value={e.nome}>{e.nome} ({e.quantidade} {e.unidade})</option>)}
                   </select>
                   <input type="number" placeholder="Qtd" className={inputCls} value={itemVenda.quantidade} onChange={(e) => setItemVenda({ ...itemVenda, quantidade: +e.target.value })} />
                   <input type="number" step="0.01" placeholder="Preço R$" className={inputCls} value={itemVenda.valorUnit} onChange={(e) => setItemVenda({ ...itemVenda, valorUnit: +e.target.value })} />
@@ -1299,11 +1349,11 @@ export default function ChocoGest() {
                 <h4 className="text-amber-200 mb-2">Ingredientes</h4>
                 <div className="grid grid-cols-3 gap-3 mb-3">
                   <select className={inputCls} value={ingredienteForm.nome} onChange={(e) => {
-                    const item = data.estoque.find((i) => i.nome === e.target.value);
+                    const item = saldoEstoque.find((i) => i.nome === e.target.value);
                     setIngredienteForm({ nome: e.target.value, quantidade: 0, valorUnit: item?.valorUnit ?? 0 });
                   }}>
                     <option value="">Ingrediente...</option>
-                    {data.estoque.filter((e) => e.tipo === 'MateriaPrima').map((e) => <option key={e.id} value={e.nome}>{e.nome}</option>)}
+                    {saldoEstoque.filter((e) => e.tipo === 'MateriaPrima').map((e) => <option key={e.nome} value={e.nome}>{e.nome} ({e.quantidade} {e.unidade})</option>)}
                   </select>
                   <input type="number" placeholder="Qtd" className={inputCls} value={ingredienteForm.quantidade} onChange={(e) => setIngredienteForm({ ...ingredienteForm, quantidade: +e.target.value })} />
                   <input type="number" step="0.01" placeholder="R$/un" className={inputCls} value={ingredienteForm.valorUnit} onChange={(e) => setIngredienteForm({ ...ingredienteForm, valorUnit: +e.target.value })} />
@@ -1350,7 +1400,7 @@ export default function ChocoGest() {
                   <Field label="Produto Acabado">
                     <select className={inputCls} value={produtoPreco} onChange={(e) => setProdutoPreco(e.target.value)}>
                       <option value="">Selecione...</option>
-                      {produtosAcabados.map((p) => <option key={p.id} value={p.nome}>{p.nome}</option>)}
+                      {produtosAcabados.map((p) => <option key={p.nome} value={p.nome}>{p.nome}</option>)}
                     </select>
                   </Field>
                   <Field label="Margem de Lucro (%)">
