@@ -1,4 +1,11 @@
-import type { Compra, EstoqueItem, Producao, TipoItem } from '@/lib/types';
+import type { Compra, EstoqueItem, Producao, TipoItem, Venda } from '@/lib/types';
+
+export interface VendaComProduto {
+  vendaId: number;
+  data: string;
+  cliente: string;
+  quantidade: number;
+}
 
 export interface SaldoEstoque {
   nome: string;
@@ -41,6 +48,31 @@ export function quantidadeDisponivel(estoque: EstoqueItem[], nome: string): numb
   return estoque
     .filter((e) => e.nome.toLowerCase() === nome.toLowerCase() && e.quantidade > 0)
     .reduce((acc, e) => acc + e.quantidade, 0);
+}
+
+export function vendasDoProduto(vendas: Venda[], produto: string): VendaComProduto[] {
+  const key = produto.toLowerCase();
+  const result: VendaComProduto[] = [];
+
+  for (const venda of vendas) {
+    const quantidade = venda.itens
+      .filter((i) => i.nome.toLowerCase() === key)
+      .reduce((acc, i) => acc + i.quantidade, 0);
+    if (quantidade > 0) {
+      result.push({
+        vendaId: venda.id,
+        data: venda.data,
+        cliente: venda.cliente,
+        quantidade,
+      });
+    }
+  }
+
+  return result.sort((a, b) => b.data.localeCompare(a.data));
+}
+
+export function totalVendidoProduto(vendas: Venda[], produto: string): number {
+  return vendasDoProduto(vendas, produto).reduce((acc, v) => acc + v.quantidade, 0);
 }
 
 export interface ItemCatalogo {

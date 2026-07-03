@@ -28,6 +28,8 @@ import {
   catalogoItensLancados,
   catalogoProdutosProduzidos,
   quantidadeDisponivel,
+  totalVendidoProduto,
+  vendasDoProduto,
 } from '@/lib/estoque';
 import { formatCurrency, formatDate, formatMesAno, mesAtualISO, nextId, sumBy, todayISO } from '@/lib/format';
 import {
@@ -353,6 +355,57 @@ function validarIngredientesProducao(estoque: EstoqueItem[], producao: Producao)
     }
   }
   return null;
+}
+
+function formatarMensagemBloqueioProducao(
+  producao: Producao,
+  estoque: EstoqueItem[],
+  vendas: Venda[],
+  acao: 'excluir' | 'editar'
+): string {
+  const disponivel = quantidadeDisponivel(estoque, producao.produto);
+  const vendasRelacionadas = vendasDoProduto(vendas, producao.produto);
+  const totalVendido = totalVendidoProduto(vendas, producao.produto);
+  const faltam = Math.max(0, producao.quantidade - disponivel);
+
+  const linhas = [
+    `Não é possível ${acao} esta produção: o estoque de "${producao.produto}" não cobre a reversão.`,
+    '',
+    `• Nesta produção: ${producao.quantidade} ${producao.unidade}`,
+    `• Disponível no estoque: ${disponivel}`,
+    `• Faltam para desfazer: ${faltam}`,
+  ];
+
+  if (totalVendido > 0) {
+    linhas.push(`• Total vendido: ${totalVendido}`);
+  }
+
+  if (vendasRelacionadas.length > 0) {
+    linhas.push('', 'Vendas que consumiram este produto:');
+    for (const v of vendasRelacionadas.slice(0, 6)) {
+      linhas.push(
+        `  — Venda #${v.vendaId} (${formatDate(v.data)}): ${v.quantidade} un. — ${v.cliente}`
+      );
+    }
+    if (vendasRelacionadas.length > 6) {
+      linhas.push(`  … e mais ${vendasRelacionadas.length - 6} venda(s).`);
+    }
+    linhas.push('', 'Para desfazer completamente, exclua ou edite essas vendas em Vendas primeiro.');
+  } else if (disponivel < producao.quantidade) {
+    linhas.push(
+      '',
+      'Não há vendas registradas deste produto. Verifique outras produções do mesmo nome ou lançamentos no estoque.'
+    );
+  }
+
+  if (acao === 'excluir') {
+    linhas.push(
+      '',
+      'Na próxima confirmação você pode excluir apenas o registro (sem alterar estoque nem vendas).'
+    );
+  }
+
+  return linhas.join('\n');
 }
 
 const VENDA_FORM_INICIAL = {
@@ -890,10 +943,24 @@ export default function ChocoGest() {
     if (!producao) return;
 
     if (!podeReverterProducao(data.estoque, producao)) {
-      const disponivel = quantidadeDisponivel(data.estoque, producao.produto);
-      return alert(
-        `Não é possível excluir: saldo insuficiente de "${producao.produto}" (${disponivel} disponível, ${producao.quantidade} nesta produção). Verifique vendas que consumiram este produto.`
-      );
+      alert(formatarMensagemBloqueioProducao(producao, data.estoque, data.vendas, 'excluir'));
+      if (
+        !confirm(
+          'Excluir apenas o registro de produção?\n\nO estoque e as vendas NÃO serão alterados. Use quando o produto já foi vendido ou consumido.'
+        )
+      ) {
+        return;
+      }
+
+      update((prev) => ({
+        ...prev,
+        producoes: prev.producoes.filter((x) => x.id !== id),
+      }));
+
+      if (producaoEditandoId === id) {
+        resetFormProducao();
+      }
+      return;
     }
 
     if (
@@ -946,10 +1013,7 @@ export default function ChocoGest() {
     if (editando) {
       const antiga = data.producoes.find((p) => p.id === producaoEditandoId);
       if (antiga && !podeReverterProducao(data.estoque, antiga)) {
-        const disponivel = quantidadeDisponivel(data.estoque, antiga.produto);
-        return alert(
-          `Não é possível editar: saldo insuficiente de "${antiga.produto}" (${disponivel} disponível, ${antiga.quantidade} nesta produção). Verifique vendas que consumiram este produto.`
-        );
+        return alert(formatarMensagemBloqueioProducao(antiga, data.estoque, data.vendas, 'editar'));
       }
     }
 
