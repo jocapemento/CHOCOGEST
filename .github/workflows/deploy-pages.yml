@@ -23,9 +23,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Configurar GitHub Pages
-        uses: actions/configure-pages@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -45,48 +42,12 @@ jobs:
           test -f out/.nojekyll
           grep -q "ChocoGest" out/index.html
 
-      - name: Publicar artefato
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: ./out
-
-      - name: Guardar build para branch gh-pages
+      - name: Guardar build estatico
         uses: actions/upload-artifact@v4
         with:
           name: chocogest-static
           path: out
           retention-days: 1
-
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - name: Aguardar Pages API (apos mudanca de visibilidade)
-        run: sleep 30
-
-      - name: Deploy via GitHub Actions
-        id: deployment
-        uses: actions/deploy-pages@v4
-        continue-on-error: true
-
-      - name: Aguardar estabilizacao
-        if: steps.deployment.outcome == 'failure'
-        run: sleep 45
-
-      - name: Repetir deploy
-        if: steps.deployment.outcome == 'failure'
-        id: deployment_retry
-        uses: actions/deploy-pages@v4
-
-      - name: Falhar se deploy nao concluiu
-        if: steps.deployment.outcome == 'failure' && steps.deployment_retry.outcome != 'success'
-        run: exit 1
 
   publish-gh-pages:
     needs: build
@@ -107,3 +68,54 @@ jobs:
           publish_dir: ./out
           publish_branch: gh-pages
           force_orphan: true
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Baixar build estatico
+        uses: actions/download-artifact@v4
+        with:
+          name: chocogest-static
+          path: out
+
+      - name: Configurar GitHub Pages
+        uses: actions/configure-pages@v4
+        continue-on-error: true
+
+      - name: Publicar artefato
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./out
+
+      - name: Aguardar Pages API
+        run: sleep 30
+
+      - name: Deploy via GitHub Actions
+        id: deployment
+        uses: actions/deploy-pages@v4
+        continue-on-error: true
+
+      - name: Aguardar estabilizacao
+        if: steps.deployment.outcome == 'failure'
+        run: sleep 45
+
+      - name: Repetir deploy
+        if: steps.deployment.outcome == 'failure'
+        id: deployment_retry
+        uses: actions/deploy-pages@v4
+        continue-on-error: true
+
+      - name: Avisar se Pages nao esta habilitado
+        if: steps.deployment.outcome == 'failure' && steps.deployment_retry.outcome != 'success'
+        run: |
+          echo "::warning::GitHub Pages nao esta habilitado. Va em Settings > Pages e escolha GitHub Actions ou branch gh-pages."
+          exit 0
