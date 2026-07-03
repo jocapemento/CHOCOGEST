@@ -27,7 +27,7 @@ O workflow `.github/workflows/deploy-pages.yml` gera o site estático e publica 
 
 **Não use** a branch `main` como fonte — isso publica o README em vez do app.
 
-**Não use** “GitHub Actions” como fonte neste projeto — o deploy via artefato falhou com 404; a branch `gh-pages` é o caminho estável.
+O workflow publica na branch `gh-pages` e solicita rebuild automático do GitHub Pages (push via token não dispara o deploy sozinho).
 
 ### Validar antes do push
 
