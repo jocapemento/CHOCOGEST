@@ -4,11 +4,40 @@ export function formatCurrency(value: number | null | undefined): string {
   return n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 }
 
+export function normalizeDateISO(date: string | undefined | null, fallback?: string): string {
+  if (!date?.trim()) return fallback ?? todayISO();
+
+  const trimmed = date.trim();
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    return trimmed;
+  }
+
+  const br = trimmed.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+  if (br) {
+    const day = br[1].padStart(2, '0');
+    const month = br[2].padStart(2, '0');
+    const year = br[3];
+    return `${year}-${month}-${day}`;
+  }
+
+  return fallback ?? trimmed;
+}
+
 export function formatDate(date: string): string {
   if (!date) return '—';
-  const [y, m, d] = date.split('-');
-  if (!y || !m || !d) return date;
-  return `${d}/${m}/${y}`;
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    const [y, m, d] = date.split('-');
+    return `${d}/${m}/${y}`;
+  }
+
+  const br = date.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+  if (br) {
+    return `${br[1].padStart(2, '0')}/${br[2].padStart(2, '0')}/${br[3]}`;
+  }
+
+  return date;
 }
 
 const MESES_CURTOS = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];

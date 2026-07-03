@@ -9,7 +9,7 @@ import type {
   Producao,
   Venda,
 } from './types';
-import { todayISO } from './format';
+import { normalizeDateISO, todayISO } from './format';
 
 function asNumber(value: unknown, fallback = 0): number {
   const n = Number(value);
@@ -26,7 +26,7 @@ function normalizeEstoque(items: unknown[]): EstoqueItem[] {
       quantidade: asNumber(item.quantidade),
       unidade: item.unidade ?? 'un',
       valorUnit: asNumber(item.valorUnit),
-      data: item.data,
+      data: item.data ? normalizeDateISO(item.data, todayISO()) : undefined,
     };
   });
 }
@@ -39,7 +39,7 @@ function normalizePatrimonio(items: unknown[]): PatrimonioItem[] {
       id: item.id ?? idx + 1,
       nome: item.nome ?? 'Sem nome',
       categoria: item.categoria ?? 'Outros',
-      dataAquisicao: item.dataAquisicao ?? todayISO(),
+      dataAquisicao: normalizeDateISO(item.dataAquisicao, todayISO()),
       valorAquisicao,
       valorAtual: asNumber(item.valorAtual, valorAquisicao),
       depreciacaoAnual: asNumber(item.depreciacaoAnual),
@@ -53,7 +53,7 @@ function normalizeMovimentos(items: unknown[]): MovimentoFinanceiro[] {
     const item = raw as Partial<MovimentoFinanceiro>;
     return {
       id: item.id ?? idx + 1,
-      data: item.data ?? todayISO(),
+      data: normalizeDateISO(item.data, todayISO()),
       descricao: item.descricao ?? '',
       tipo: item.tipo === 'saida' ? 'saida' : 'entrada',
       valor: asNumber(item.valor),
@@ -92,7 +92,7 @@ function normalizeCompras(items: unknown[]): Compra[] {
     const item = raw as Partial<Compra>;
     return {
       id: item.id ?? idx + 1,
-      data: item.data ?? todayISO(),
+      data: normalizeDateISO(item.data, todayISO()),
       fornecedor: item.fornecedor ?? '',
       formaPagamento: item.formaPagamento ?? 'Dinheiro',
       cartao: item.cartao ?? null,
@@ -108,7 +108,7 @@ function normalizeVendas(items: unknown[]): Venda[] {
     const item = raw as Partial<Venda>;
     return {
       id: item.id ?? idx + 1,
-      data: item.data ?? todayISO(),
+      data: normalizeDateISO(item.data, todayISO()),
       cliente: item.cliente ?? '',
       formaPagamento: item.formaPagamento ?? 'Dinheiro',
       total: asNumber(item.total),
@@ -122,7 +122,7 @@ function normalizeProducoes(items: unknown[]): Producao[] {
     const item = raw as Partial<Producao>;
     return {
       id: item.id ?? idx + 1,
-      data: item.data ?? todayISO(),
+      data: normalizeDateISO(item.data, todayISO()),
       lote: item.lote ?? '',
       produto: item.produto ?? '',
       quantidade: asNumber(item.quantidade, 1),
@@ -132,6 +132,7 @@ function normalizeProducoes(items: unknown[]): Producao[] {
             nome: ing.nome ?? '',
             quantidade: asNumber(ing.quantidade),
             valorUnit: asNumber(ing.valorUnit),
+            unidade: ing.unidade,
           }))
         : [],
       custoEstimado: asNumber(item.custoEstimado),
@@ -194,15 +195,16 @@ export function loadAppData(): AppData {
 }
 
 export function saveAppData(data: AppData): void {
-  localStorage.setItem(STORAGE_KEYS.estoque, JSON.stringify(data.estoque));
-  localStorage.setItem(STORAGE_KEYS.compras, JSON.stringify(data.compras));
-  localStorage.setItem(STORAGE_KEYS.vendas, JSON.stringify(data.vendas));
-  localStorage.setItem(STORAGE_KEYS.producoes, JSON.stringify(data.producoes));
-  localStorage.setItem(STORAGE_KEYS.cartoes, JSON.stringify(data.cartoes));
-  localStorage.setItem(STORAGE_KEYS.bancos, JSON.stringify(data.bancos));
-  localStorage.setItem(STORAGE_KEYS.patrimonio, JSON.stringify(data.patrimonio));
-  localStorage.setItem(STORAGE_KEYS.caixa, JSON.stringify(data.movimentosCaixa));
-  localStorage.setItem(STORAGE_KEYS.banco, JSON.stringify(data.movimentosBanco));
+  const normalized = normalizeAppData(data);
+  localStorage.setItem(STORAGE_KEYS.estoque, JSON.stringify(normalized.estoque));
+  localStorage.setItem(STORAGE_KEYS.compras, JSON.stringify(normalized.compras));
+  localStorage.setItem(STORAGE_KEYS.vendas, JSON.stringify(normalized.vendas));
+  localStorage.setItem(STORAGE_KEYS.producoes, JSON.stringify(normalized.producoes));
+  localStorage.setItem(STORAGE_KEYS.cartoes, JSON.stringify(normalized.cartoes));
+  localStorage.setItem(STORAGE_KEYS.bancos, JSON.stringify(normalized.bancos));
+  localStorage.setItem(STORAGE_KEYS.patrimonio, JSON.stringify(normalized.patrimonio));
+  localStorage.setItem(STORAGE_KEYS.caixa, JSON.stringify(normalized.movimentosCaixa));
+  localStorage.setItem(STORAGE_KEYS.banco, JSON.stringify(normalized.movimentosBanco));
 }
 
 export function exportBackup(data: AppData): void {

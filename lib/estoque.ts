@@ -75,6 +75,45 @@ export function totalVendidoProduto(vendas: Venda[], produto: string): number {
   return vendasDoProduto(vendas, produto).reduce((acc, v) => acc + v.quantidade, 0);
 }
 
+export function materiasPrimasDisponiveis(estoque: EstoqueItem[]): string[] {
+  return agruparEstoque(estoque)
+    .filter((s) => s.tipo === 'MateriaPrima' && s.quantidade > 0)
+    .map((s) => s.nome)
+    .sort((a, b) => a.localeCompare(b, 'pt-BR'));
+}
+
+export function saldoIngrediente(estoque: EstoqueItem[], nome: string): SaldoEstoque | undefined {
+  return agruparEstoque(estoque).find((s) => s.nome.toLowerCase() === nome.toLowerCase());
+}
+
+export function validarIngredientesProducao(estoque: EstoqueItem[], producao: Producao): string | null {
+  const disponiveis = materiasPrimasDisponiveis(estoque);
+
+  for (const ing of producao.ingredientes) {
+    const saldo = saldoIngrediente(estoque, ing.nome);
+
+    if (!saldo || saldo.tipo !== 'MateriaPrima' || saldo.quantidade <= 0) {
+      const lista =
+        disponiveis.length > 0
+          ? `\n\nMatérias-primas no estoque:\n${disponiveis.map((n) => `  — ${n}`).join('\n')}`
+          : '\n\nNenhuma matéria-prima com saldo no estoque.';
+      return `Ingrediente "${ing.nome}" não existe no estoque.${lista}`;
+    }
+
+    if (ing.unidade && saldo.unidade.toLowerCase() !== ing.unidade.toLowerCase()) {
+      return `Ingrediente "${ing.nome}": unidade "${ing.unidade}" não confere com o estoque ("${saldo.unidade}").`;
+    }
+
+    if (saldo.quantidade < ing.quantidade) {
+      return `Ingrediente "${ing.nome}" insuficiente (disponível: ${saldo.quantidade} ${saldo.unidade}, necessário: ${ing.quantidade}${ing.unidade ? ` ${ing.unidade}` : ''}).`;
+    }
+  }
+
+  return null;
+}
+
+
+
 export interface ItemCatalogo {
   nome: string;
   tipo: TipoItem;

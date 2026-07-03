@@ -54,7 +54,7 @@ export interface Producao {
   produto: string;
   quantidade: number;
   unidade: string;
-  ingredientes: Array<{ nome: string; quantidade: number; valorUnit: number }>;
+  ingredientes: Array<{ nome: string; quantidade: number; valorUnit: number; unidade?: string }>;
   custoEstimado: number;
 }
 

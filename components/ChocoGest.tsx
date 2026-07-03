@@ -28,10 +28,21 @@ import {
   catalogoItensLancados,
   catalogoProdutosProduzidos,
   quantidadeDisponivel,
+  saldoIngrediente,
   totalVendidoProduto,
+  validarIngredientesProducao,
   vendasDoProduto,
 } from '@/lib/estoque';
-import { formatCurrency, formatDate, formatMesAno, mesAtualISO, nextId, sumBy, todayISO } from '@/lib/format';
+import {
+  formatCurrency,
+  formatDate,
+  formatMesAno,
+  mesAtualISO,
+  nextId,
+  normalizeDateISO,
+  sumBy,
+  todayISO,
+} from '@/lib/format';
 import {
   gerarPdfCompras,
   gerarPdfDashboard,
@@ -301,16 +312,20 @@ function reverterEfeitosVenda(prev: AppData, venda: Venda): AppData {
 }
 
 function ingredientesProducaoParaItens(
+  estoque: EstoqueItem[],
   ingredientes: Producao['ingredientes']
 ): ItemMovimentacao[] {
-  return ingredientes.map((ing) => ({
-    id: 0,
-    nome: ing.nome,
-    tipo: 'MateriaPrima' as TipoItem,
-    quantidade: ing.quantidade,
-    unidade: 'kg',
-    valorUnit: ing.valorUnit,
-  }));
+  return ingredientes.map((ing) => {
+    const saldo = saldoIngrediente(estoque, ing.nome);
+    return {
+      id: 0,
+      nome: ing.nome,
+      tipo: 'MateriaPrima' as TipoItem,
+      quantidade: ing.quantidade,
+      unidade: ing.unidade ?? saldo?.unidade ?? 'kg',
+      valorUnit: ing.valorUnit,
+    };
+  });
 }
 
 function produtoProducaoParaItem(producao: Producao): ItemMovimentacao {
@@ -328,7 +343,7 @@ function produtoProducaoParaItem(producao: Producao): ItemMovimentacao {
 
 function aplicarEfeitosProducao(estoque: EstoqueItem[], producao: Producao): EstoqueItem[] {
   let updated = estoque;
-  for (const item of ingredientesProducaoParaItens(producao.ingredientes)) {
+  for (const item of ingredientesProducaoParaItens(updated, producao.ingredientes)) {
     updated = atualizarEstoqueVenda(updated, [item]);
   }
   return atualizarEstoqueCompra(updated, [produtoProducaoParaItem(producao)], producao.data);
@@ -338,23 +353,13 @@ function reverterEfeitosProducao(estoque: EstoqueItem[], producao: Producao): Es
   const updated = atualizarEstoqueVenda(estoque, [produtoProducaoParaItem(producao)]);
   return atualizarEstoqueCompra(
     updated,
-    ingredientesProducaoParaItens(producao.ingredientes),
+    ingredientesProducaoParaItens(updated, producao.ingredientes),
     producao.data
   );
 }
 
 function podeReverterProducao(estoque: EstoqueItem[], producao: Producao): boolean {
   return quantidadeDisponivel(estoque, producao.produto) >= producao.quantidade;
-}
-
-function validarIngredientesProducao(estoque: EstoqueItem[], producao: Producao): string | null {
-  for (const ing of producao.ingredientes) {
-    const qtd = quantidadeDisponivel(estoque, ing.nome);
-    if (qtd < ing.quantidade) {
-      return `Ingrediente "${ing.nome}" insuficiente (disponível: ${qtd}, necessário: ${ing.quantidade}).`;
-    }
-  }
-  return null;
 }
 
 function formatarMensagemBloqueioProducao(
@@ -421,7 +426,7 @@ const PRODUCAO_FORM_INICIAL = {
   produto: '',
   quantidade: 1,
   unidade: 'un',
-  ingredientes: [] as Array<{ nome: string; quantidade: number; valorUnit: number }>,
+  ingredientes: [] as Array<{ nome: string; quantidade: number; valorUnit: number; unidade?: string }>,
 };
 
 const MOV_CAIXA_FORM_INICIAL = {
@@ -596,7 +601,7 @@ export default function ChocoGest() {
       ...prev,
       estoque: [
         ...prev.estoque,
-        { id: nextId(prev.estoque), ...novoItem, data: novoItem.data || todayISO() },
+        { id: nextId(prev.estoque), ...novoItem, data: normalizeDateISO(novoItem.data) },
       ],
     }));
     setNovoItem({ nome: '', tipo: 'MateriaPrima', quantidade: 0, unidade: 'kg', valorUnit: 0, data: todayISO() });
@@ -653,7 +658,7 @@ export default function ChocoGest() {
   const editarCompra = (compra: Compra) => {
     const cartao = data.cartoes.find((c) => c.nome === compra.cartao);
     setNovaCompra({
-      data: compra.data,
+      data: normalizeDateISO(compra.data),
       fornecedor: compra.fornecedor,
       formaPagamento: compra.formaPagamento,
       cartaoId: cartao?.id ?? data.cartoes[0]?.id ?? 1,
@@ -731,7 +736,7 @@ export default function ChocoGest() {
 
     const total = sumBy(itens, (i) => i.quantidade * i.valorUnit);
     const cartao = data.cartoes.find((c) => c.id === novaCompra.cartaoId);
-    const dataOperacao = novaCompra.data || todayISO();
+    const dataOperacao = normalizeDateISO(novaCompra.data);
     const editando = compraEditandoId !== null;
 
     const compra: Compra = {
@@ -812,7 +817,7 @@ export default function ChocoGest() {
 
   const editarVenda = (venda: Venda) => {
     setNovaVenda({
-      data: venda.data,
+      data: normalizeDateISO(venda.data),
       cliente: venda.cliente,
       formaPagamento: venda.formaPagamento,
       itens: venda.itens.map((i) => ({ ...i })),
@@ -865,7 +870,7 @@ export default function ChocoGest() {
       return alert('Preencha cliente e adicione itens.');
     }
     const total = sumBy(novaVenda.itens, (i) => i.quantidade * i.valorUnit);
-    const dataOperacao = novaVenda.data || todayISO();
+    const dataOperacao = normalizeDateISO(novaVenda.data);
     const editando = vendaEditandoId !== null;
 
     const venda: Venda = {
@@ -900,10 +905,29 @@ export default function ChocoGest() {
   };
 
   const adicionarIngrediente = () => {
-    if (!ingredienteForm.nome.trim()) return;
+    if (!ingredienteForm.nome.trim()) {
+      return alert('Selecione um ingrediente do estoque.');
+    }
+    const item = saldoEstoque.find(
+      (i) => i.nome === ingredienteForm.nome && i.tipo === 'MateriaPrima'
+    );
+    if (!item) {
+      return alert('Ingrediente inválido. Selecione uma matéria-prima com saldo no estoque.');
+    }
+    if (ingredienteForm.quantidade <= 0) {
+      return alert('Informe uma quantidade válida.');
+    }
+    if (ingredienteForm.quantidade > item.quantidade) {
+      return alert(
+        `Quantidade indisponível. Saldo de "${item.nome}": ${item.quantidade} ${item.unidade}.`
+      );
+    }
     setNovaProducao((p) => ({
       ...p,
-      ingredientes: [...p.ingredientes, { ...ingredienteForm }],
+      ingredientes: [
+        ...p.ingredientes,
+        { ...ingredienteForm, unidade: item.unidade },
+      ],
     }));
     setIngredienteForm({ nome: '', quantidade: 0, valorUnit: 0 });
   };
@@ -927,12 +951,15 @@ export default function ChocoGest() {
 
   const editarProducao = (producao: Producao) => {
     setNovaProducao({
-      data: producao.data,
+      data: normalizeDateISO(producao.data),
       lote: producao.lote,
       produto: producao.produto,
       quantidade: producao.quantidade,
       unidade: producao.unidade,
-      ingredientes: producao.ingredientes.map((i) => ({ ...i })),
+      ingredientes: producao.ingredientes.map((i) => {
+        const saldo = saldoIngrediente(data.estoque, i.nome);
+        return { ...i, unidade: i.unidade ?? saldo?.unidade };
+      }),
     });
     setProducaoEditandoId(producao.id);
     setIngredienteForm({ nome: '', quantidade: 0, valorUnit: 0 });
@@ -1001,7 +1028,7 @@ export default function ChocoGest() {
     const editando = producaoEditandoId !== null;
     const producao: Producao = {
       id: editando ? producaoEditandoId : nextId(data.producoes),
-      data: novaProducao.data || todayISO(),
+      data: normalizeDateISO(novaProducao.data),
       lote: novaProducao.lote || `L${Date.now()}`,
       produto: novaProducao.produto,
       quantidade: novaProducao.quantidade,
@@ -1025,6 +1052,16 @@ export default function ChocoGest() {
 
     const erroIngredientes = validarIngredientesProducao(estoqueBase, producao);
     if (erroIngredientes) return alert(erroIngredientes);
+
+    const saldoProduto = saldoIngrediente(estoqueBase, producao.produto);
+    if (
+      saldoProduto &&
+      saldoProduto.unidade.toLowerCase() !== producao.unidade.trim().toLowerCase()
+    ) {
+      return alert(
+        `Unidade "${producao.unidade}" não confere com o estoque existente de "${producao.produto}" (${saldoProduto.unidade}).`
+      );
+    }
 
     update((prev) => {
       if (editando) {
@@ -1111,7 +1148,7 @@ export default function ChocoGest() {
       return alert('Lançamentos automáticos de Compras/Vendas devem ser alterados na origem.');
     }
     setMovCaixa({
-      data: mov.data,
+      data: normalizeDateISO(mov.data),
       descricao: mov.descricao,
       tipo: mov.tipo,
       valor: mov.valor,
@@ -1136,7 +1173,7 @@ export default function ChocoGest() {
 
   const registrarMovCaixa = () => {
     if (!movCaixa.descricao.trim() || movCaixa.valor <= 0) return alert('Preencha descrição e valor.');
-    const dataOperacao = movCaixa.data || todayISO();
+    const dataOperacao = normalizeDateISO(movCaixa.data);
     const editando = movCaixaEditandoId !== null;
 
     const movimento: Omit<MovimentoFinanceiro, 'id'> = {
@@ -1200,7 +1237,7 @@ export default function ChocoGest() {
     }
     const banco = data.bancos.find((b) => b.nome === mov.banco);
     setMovBanco({
-      data: mov.data,
+      data: normalizeDateISO(mov.data),
       descricao: mov.descricao,
       tipo: mov.tipo,
       valor: mov.valor,
@@ -1228,7 +1265,7 @@ export default function ChocoGest() {
     if (!movBanco.descricao.trim() || movBanco.valor <= 0) return alert('Preencha descrição e valor.');
     const banco = data.bancos.find((b) => b.id === movBanco.bancoId);
     if (!banco) return alert('Selecione um banco cadastrado.');
-    const dataOperacao = movBanco.data || todayISO();
+    const dataOperacao = normalizeDateISO(movBanco.data);
     const editando = movBancoEditandoId !== null;
 
     const movimento: Omit<MovimentoFinanceiro, 'id'> = {
@@ -1813,7 +1850,7 @@ export default function ChocoGest() {
                   <div className="mt-3 text-sm space-y-1">
                     {novaProducao.ingredientes.map((ing, idx) => (
                       <div key={idx} className="flex justify-between items-center text-amber-200 gap-2">
-                        <span>{ing.nome}: {ing.quantidade} — {formatCurrency(ing.quantidade * ing.valorUnit)}</span>
+                        <span>{ing.nome}: {ing.quantidade} {ing.unidade ?? 'kg'} — {formatCurrency(ing.quantidade * ing.valorUnit)}</span>
                         <Btn variant="danger" className="px-2 py-1" onClick={() => removerIngredienteLista(idx)}>✕</Btn>
                       </div>
                     ))}
