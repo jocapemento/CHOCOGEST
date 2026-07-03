@@ -34,9 +34,11 @@ import {
   vendasDoProduto,
 } from '@/lib/estoque';
 import {
+  brlParaUsd,
   formatCurrency,
   formatDate,
   formatMesAno,
+  formatUsd,
   mesAtualISO,
   nextId,
   normalizeDateISO,
@@ -550,6 +552,7 @@ export default function ChocoGest() {
   const [producaoEditandoId, setProducaoEditandoId] = useState<number | null>(null);
   const [ingredienteForm, setIngredienteForm] = useState({ nome: '', quantidade: 0, valorUnit: 0 });
   const [novoCartao, setNovoCartao] = useState({ nome: '', limite: 0 });
+  const [cotacaoDolar, setCotacaoDolar] = useState(0);
   const [novoPatrimonio, setNovoPatrimonio] = useState({
     nome: '',
     categoria: 'Equipamento',
@@ -1950,6 +1953,22 @@ export default function ChocoGest() {
                 </div>
                 <Btn className="mt-4" onClick={adicionarCartao}>Adicionar Cartão</Btn>
               </Card>
+              <Card className="mb-4">
+                <Field label="Cotação do dólar (R$)">
+                  <input
+                    type="number"
+                    step="0.0001"
+                    min={0}
+                    className={`${inputCls} max-w-xs`}
+                    value={cotacaoDolar || ''}
+                    onChange={(e) => setCotacaoDolar(+e.target.value)}
+                    placeholder="Ex: 5.50"
+                  />
+                </Field>
+                <p className="text-amber-400/60 text-sm mt-2">
+                  Usada para converter o total parcelado de cada cartão em dólar.
+                </p>
+              </Card>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
                 {data.cartoes.map((c: CartaoModel) => {
                   const gastoCartao = sumBy(
@@ -1969,6 +1988,11 @@ export default function ChocoGest() {
                             Parcela em {formatMesAno(mesAtual)}: {formatCurrency(parcelaMesAtual)}
                           </div>
                           <div className="text-amber-300 text-sm">Total parcelado: {formatCurrency(totalParcelado)}</div>
+                          {cotacaoDolar > 0 && (
+                            <div className="text-amber-200 text-sm mt-1">
+                              Em dólar: {formatUsd(brlParaUsd(totalParcelado, cotacaoDolar) ?? 0)}
+                            </div>
+                          )}
                         </div>
                         <Btn variant="danger" onClick={() => removerCartao(c.id)}>✕</Btn>
                       </div>

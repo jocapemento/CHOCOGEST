@@ -4,6 +4,17 @@ export function formatCurrency(value: number | null | undefined): string {
   return n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 }
 
+export function formatUsd(value: number | null | undefined): string {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 'US$\u00a00.00';
+  return n.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+}
+
+export function brlParaUsd(valorBrl: number, cotacaoUsd: number): number | null {
+  if (!Number.isFinite(valorBrl) || !Number.isFinite(cotacaoUsd) || cotacaoUsd <= 0) return null;
+  return valorBrl / cotacaoUsd;
+}
+
 export function normalizeDateISO(date: string | undefined | null, fallback?: string): string {
   if (!date?.trim()) return fallback ?? todayISO();
 
