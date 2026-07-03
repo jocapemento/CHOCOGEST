@@ -23,7 +23,12 @@ import {
   totalParcelasMes,
   valorParcelaNoMes,
 } from '@/lib/cartoes';
-import { agruparEstoque, catalogoItensLancados, catalogoProdutosProduzidos } from '@/lib/estoque';
+import {
+  agruparEstoque,
+  catalogoItensLancados,
+  catalogoProdutosProduzidos,
+  quantidadeDisponivel,
+} from '@/lib/estoque';
 import { formatCurrency, formatDate, formatMesAno, mesAtualISO, nextId, sumBy, todayISO } from '@/lib/format';
 import {
   gerarPdfCompras,
@@ -293,11 +298,77 @@ function reverterEfeitosVenda(prev: AppData, venda: Venda): AppData {
   };
 }
 
+function ingredientesProducaoParaItens(
+  ingredientes: Producao['ingredientes']
+): ItemMovimentacao[] {
+  return ingredientes.map((ing) => ({
+    id: 0,
+    nome: ing.nome,
+    tipo: 'MateriaPrima' as TipoItem,
+    quantidade: ing.quantidade,
+    unidade: 'kg',
+    valorUnit: ing.valorUnit,
+  }));
+}
+
+function produtoProducaoParaItem(producao: Producao): ItemMovimentacao {
+  const custoUnit =
+    producao.quantidade > 0 ? producao.custoEstimado / producao.quantidade : producao.custoEstimado;
+  return {
+    id: 0,
+    nome: producao.produto,
+    tipo: 'ProdutoAcabado',
+    quantidade: producao.quantidade,
+    unidade: producao.unidade,
+    valorUnit: custoUnit,
+  };
+}
+
+function aplicarEfeitosProducao(estoque: EstoqueItem[], producao: Producao): EstoqueItem[] {
+  let updated = estoque;
+  for (const item of ingredientesProducaoParaItens(producao.ingredientes)) {
+    updated = atualizarEstoqueVenda(updated, [item]);
+  }
+  return atualizarEstoqueCompra(updated, [produtoProducaoParaItem(producao)], producao.data);
+}
+
+function reverterEfeitosProducao(estoque: EstoqueItem[], producao: Producao): EstoqueItem[] {
+  const updated = atualizarEstoqueVenda(estoque, [produtoProducaoParaItem(producao)]);
+  return atualizarEstoqueCompra(
+    updated,
+    ingredientesProducaoParaItens(producao.ingredientes),
+    producao.data
+  );
+}
+
+function podeReverterProducao(estoque: EstoqueItem[], producao: Producao): boolean {
+  return quantidadeDisponivel(estoque, producao.produto) >= producao.quantidade;
+}
+
+function validarIngredientesProducao(estoque: EstoqueItem[], producao: Producao): string | null {
+  for (const ing of producao.ingredientes) {
+    const qtd = quantidadeDisponivel(estoque, ing.nome);
+    if (qtd < ing.quantidade) {
+      return `Ingrediente "${ing.nome}" insuficiente (disponível: ${qtd}, necessário: ${ing.quantidade}).`;
+    }
+  }
+  return null;
+}
+
 const VENDA_FORM_INICIAL = {
   data: todayISO(),
   cliente: '',
   formaPagamento: 'Dinheiro',
   itens: [] as ItemMovimentacao[],
+};
+
+const PRODUCAO_FORM_INICIAL = {
+  data: todayISO(),
+  lote: '',
+  produto: '',
+  quantidade: 1,
+  unidade: 'un',
+  ingredientes: [] as Array<{ nome: string; quantidade: number; valorUnit: number }>,
 };
 
 const MOV_CAIXA_FORM_INICIAL = {
@@ -417,14 +488,8 @@ export default function ChocoGest() {
     quantidade: 1,
     valorUnit: 0,
   });
-  const [novaProducao, setNovaProducao] = useState({
-    data: todayISO(),
-    lote: '',
-    produto: '',
-    quantidade: 1,
-    unidade: 'un',
-    ingredientes: [] as Array<{ nome: string; quantidade: number; valorUnit: number }>,
-  });
+  const [novaProducao, setNovaProducao] = useState({ ...PRODUCAO_FORM_INICIAL });
+  const [producaoEditandoId, setProducaoEditandoId] = useState<number | null>(null);
   const [ingredienteForm, setIngredienteForm] = useState({ nome: '', quantidade: 0, valorUnit: 0 });
   const [novoCartao, setNovoCartao] = useState({ nome: '', limite: 0 });
   const [novoPatrimonio, setNovoPatrimonio] = useState({
@@ -790,16 +855,85 @@ export default function ChocoGest() {
     setIngredienteForm({ nome: '', quantidade: 0, valorUnit: 0 });
   };
 
+  const removerIngredienteLista = (idx: number) => {
+    setNovaProducao((p) => ({
+      ...p,
+      ingredientes: p.ingredientes.filter((_, i) => i !== idx),
+    }));
+  };
+
+  const resetFormProducao = () => {
+    setNovaProducao({ ...PRODUCAO_FORM_INICIAL, data: todayISO() });
+    setIngredienteForm({ nome: '', quantidade: 0, valorUnit: 0 });
+    setProducaoEditandoId(null);
+  };
+
+  const cancelarEdicaoProducao = () => {
+    resetFormProducao();
+  };
+
+  const editarProducao = (producao: Producao) => {
+    setNovaProducao({
+      data: producao.data,
+      lote: producao.lote,
+      produto: producao.produto,
+      quantidade: producao.quantidade,
+      unidade: producao.unidade,
+      ingredientes: producao.ingredientes.map((i) => ({ ...i })),
+    });
+    setProducaoEditandoId(producao.id);
+    setIngredienteForm({ nome: '', quantidade: 0, valorUnit: 0 });
+  };
+
+  const removerProducao = (id: number) => {
+    const producao = data.producoes.find((p) => p.id === id);
+    if (!producao) return;
+
+    if (!podeReverterProducao(data.estoque, producao)) {
+      const disponivel = quantidadeDisponivel(data.estoque, producao.produto);
+      return alert(
+        `Não é possível excluir: saldo insuficiente de "${producao.produto}" (${disponivel} disponível, ${producao.quantidade} nesta produção). Verifique vendas que consumiram este produto.`
+      );
+    }
+
+    if (
+      !confirm(
+        'Remover este lançamento de produção? Os ingredientes serão devolvidos ao estoque e o produto acabado será removido.'
+      )
+    ) {
+      return;
+    }
+
+    update((prev) => {
+      const p = prev.producoes.find((x) => x.id === id);
+      if (!p) return prev;
+      return {
+        ...prev,
+        estoque: reverterEfeitosProducao(prev.estoque, p),
+        producoes: prev.producoes.filter((x) => x.id !== id),
+      };
+    });
+
+    if (producaoEditandoId === id) {
+      resetFormProducao();
+    }
+  };
+
   const registrarProducao = () => {
     if (!novaProducao.produto.trim() || novaProducao.ingredientes.length === 0) {
       return alert('Preencha produto e ingredientes.');
     }
+    if (novaProducao.quantidade <= 0) {
+      return alert('Informe uma quantidade válida.');
+    }
+
     const custoEstimado = sumBy(
       novaProducao.ingredientes,
       (i) => i.quantidade * i.valorUnit
     );
+    const editando = producaoEditandoId !== null;
     const producao: Producao = {
-      id: nextId(data.producoes),
+      id: editando ? producaoEditandoId : nextId(data.producoes),
       data: novaProducao.data || todayISO(),
       lote: novaProducao.lote || `L${Date.now()}`,
       produto: novaProducao.produto,
@@ -809,41 +943,47 @@ export default function ChocoGest() {
       custoEstimado,
     };
 
-    update((prev) => {
-      let estoque = prev.estoque;
-      for (const ing of producao.ingredientes) {
-        estoque = atualizarEstoqueVenda(estoque, [
-          {
-            id: 0,
-            nome: ing.nome,
-            tipo: 'MateriaPrima',
-            quantidade: ing.quantidade,
-            unidade: 'kg',
-            valorUnit: ing.valorUnit,
-          },
-        ]);
+    if (editando) {
+      const antiga = data.producoes.find((p) => p.id === producaoEditandoId);
+      if (antiga && !podeReverterProducao(data.estoque, antiga)) {
+        const disponivel = quantidadeDisponivel(data.estoque, antiga.produto);
+        return alert(
+          `Não é possível editar: saldo insuficiente de "${antiga.produto}" (${disponivel} disponível, ${antiga.quantidade} nesta produção). Verifique vendas que consumiram este produto.`
+        );
       }
-      const custoUnit = producao.quantidade > 0 ? custoEstimado / producao.quantidade : custoEstimado;
-      estoque = atualizarEstoqueCompra(
-        estoque,
-        [
-          {
-            id: 0,
-            nome: producao.produto,
-            tipo: 'ProdutoAcabado',
-            quantidade: producao.quantidade,
-            unidade: producao.unidade,
-            valorUnit: custoUnit,
-          },
-        ],
-        producao.data
-      );
+    }
 
-      return { ...prev, producoes: [...prev.producoes, producao], estoque };
+    let estoqueBase = data.estoque;
+    if (editando) {
+      const antiga = data.producoes.find((p) => p.id === producaoEditandoId);
+      if (antiga) estoqueBase = reverterEfeitosProducao(estoqueBase, antiga);
+    }
+
+    const erroIngredientes = validarIngredientesProducao(estoqueBase, producao);
+    if (erroIngredientes) return alert(erroIngredientes);
+
+    update((prev) => {
+      if (editando) {
+        const antiga = prev.producoes.find((p) => p.id === producaoEditandoId);
+        if (!antiga) return prev;
+
+        const estoque = aplicarEfeitosProducao(reverterEfeitosProducao(prev.estoque, antiga), producao);
+        return {
+          ...prev,
+          estoque,
+          producoes: prev.producoes.map((p) => (p.id === producaoEditandoId ? producao : p)),
+        };
+      }
+
+      return {
+        ...prev,
+        estoque: aplicarEfeitosProducao(prev.estoque, producao),
+        producoes: [...prev.producoes, producao],
+      };
     });
 
-    setNovaProducao({ data: todayISO(), lote: '', produto: '', quantidade: 1, unidade: 'un', ingredientes: [] });
-    alert('Produção registrada!');
+    resetFormProducao();
+    alert(editando ? 'Produção atualizada com sucesso!' : 'Produção registrada!');
   };
 
   const adicionarCartao = () => {
@@ -1570,6 +1710,11 @@ export default function ChocoGest() {
             <div>
               <SectionTitle>Produção</SectionTitle>
               <Card className="mb-6">
+                {producaoEditandoId !== null && (
+                  <p className="text-amber-300 text-sm mb-4">
+                    Editando produção #{producaoEditandoId}
+                  </p>
+                )}
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
                   <DateField
                     label="Data da produção"
@@ -1603,31 +1748,53 @@ export default function ChocoGest() {
                 {novaProducao.ingredientes.length > 0 && (
                   <div className="mt-3 text-sm space-y-1">
                     {novaProducao.ingredientes.map((ing, idx) => (
-                      <div key={idx} className="text-amber-200">{ing.nome}: {ing.quantidade} — {formatCurrency(ing.quantidade * ing.valorUnit)}</div>
+                      <div key={idx} className="flex justify-between items-center text-amber-200 gap-2">
+                        <span>{ing.nome}: {ing.quantidade} — {formatCurrency(ing.quantidade * ing.valorUnit)}</span>
+                        <Btn variant="danger" className="px-2 py-1" onClick={() => removerIngredienteLista(idx)}>✕</Btn>
+                      </div>
                     ))}
                   </div>
                 )}
-                <Btn className="mt-4" onClick={registrarProducao}>Registrar Produção</Btn>
+                <div className="flex flex-wrap gap-3 mt-4">
+                  <Btn onClick={registrarProducao}>
+                    {producaoEditandoId !== null ? 'Salvar alterações' : 'Registrar Produção'}
+                  </Btn>
+                  {producaoEditandoId !== null && (
+                    <Btn variant="secondary" onClick={cancelarEdicaoProducao}>Cancelar</Btn>
+                  )}
+                </div>
               </Card>
               <Card>
-                <table className="w-full text-sm">
-                  <thead><tr className="text-amber-300 border-b border-amber-700">
-                    <th className="text-left py-2">Data</th><th className="text-left py-2">Lote</th>
-                    <th className="text-left py-2">Produto</th><th className="text-right py-2">Qtd</th>
-                    <th className="text-right py-2">Custo</th>
-                  </tr></thead>
-                  <tbody>
-                    {data.producoes.slice().reverse().map((p) => (
-                      <tr key={p.id} className="border-b border-amber-800/30">
-                        <td className="py-2">{formatDate(p.data)}</td>
-                        <td className="py-2">{p.lote}</td>
-                        <td className="py-2">{p.produto}</td>
-                        <td className="py-2 text-right">{p.quantidade} {p.unidade}</td>
-                        <td className="py-2 text-right">{formatCurrency(p.custoEstimado)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm min-w-[640px]">
+                    <thead><tr className="text-amber-300 border-b border-amber-700">
+                      <th className="text-left py-2">Data</th><th className="text-left py-2">Lote</th>
+                      <th className="text-left py-2">Produto</th><th className="text-right py-2">Qtd</th>
+                      <th className="text-right py-2">Custo</th>
+                      <th className="text-right py-2 w-32">Ações</th>
+                    </tr></thead>
+                    <tbody>
+                      {data.producoes.slice().reverse().map((p) => (
+                        <tr
+                          key={p.id}
+                          className={`border-b border-amber-800/30 ${producaoEditandoId === p.id ? 'bg-amber-900/30' : ''}`}
+                        >
+                          <td className="py-2">{formatDate(p.data)}</td>
+                          <td className="py-2">{p.lote}</td>
+                          <td className="py-2">{p.produto}</td>
+                          <td className="py-2 text-right">{p.quantidade} {p.unidade}</td>
+                          <td className="py-2 text-right">{formatCurrency(p.custoEstimado)}</td>
+                          <td className="py-2 text-right whitespace-nowrap">
+                            <Btn variant="secondary" onClick={() => editarProducao(p)}>Editar</Btn>
+                            {' '}
+                            <Btn variant="danger" onClick={() => removerProducao(p.id)}>Excluir</Btn>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {data.producoes.length === 0 && <p className="text-amber-400/60 py-4">Nenhuma produção registrada.</p>}
               </Card>
             </div>
           )}
