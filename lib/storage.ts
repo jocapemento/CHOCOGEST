@@ -1,3 +1,4 @@
+import { calcularPerdaProducao } from './estoque';
 import { AppData, EMPTY_DATA, STORAGE_KEYS } from './types';
 import type {
   BancoModel,
@@ -6,6 +7,7 @@ import type {
   EstoqueItem,
   MovimentoFinanceiro,
   PatrimonioItem,
+  PrecoGerado,
   Producao,
   Venda,
 } from './types';
@@ -136,6 +138,41 @@ function normalizeProducoes(items: unknown[]): Producao[] {
           }))
         : [],
       custoEstimado: asNumber(item.custoEstimado),
+      quantidadePerdida:
+        item.quantidadePerdida !== undefined && item.quantidadePerdida !== null
+          ? asNumber(item.quantidadePerdida)
+          : undefined,
+      percentualPerda:
+        item.percentualPerda !== undefined && item.percentualPerda !== null
+          ? asNumber(item.percentualPerda)
+          : undefined,
+    };
+  }).map((p) => {
+    const calculada = calcularPerdaProducao(p);
+    if (!calculada) return p;
+    return {
+      ...p,
+      quantidadePerdida: calculada.perdaQuantidade,
+      percentualPerda: calculada.perdaPercentual,
+    };
+  });
+}
+
+function normalizePrecosGerados(items: unknown[]): PrecoGerado[] {
+  return items.map((raw, idx) => {
+    const item = raw as Partial<PrecoGerado>;
+    const custoUnitario = asNumber(item.custoUnitario);
+    const margemLucro = asNumber(item.margemLucro);
+    const precoInformado = asNumber(item.precoSugerido);
+    return {
+      id: item.id ?? idx + 1,
+      data: normalizeDateISO(item.data, todayISO()),
+      produto: item.produto ?? '',
+      unidade: item.unidade ?? 'un',
+      custoUnitario,
+      margemLucro,
+      precoSugerido:
+        precoInformado > 0 ? precoInformado : custoUnitario * (1 + margemLucro / 100),
     };
   });
 }
@@ -151,6 +188,7 @@ export function normalizeAppData(data: AppData): AppData {
     patrimonio: normalizePatrimonio(data.patrimonio),
     movimentosCaixa: normalizeMovimentos(data.movimentosCaixa),
     movimentosBanco: normalizeMovimentos(data.movimentosBanco),
+    precosGerados: normalizePrecosGerados(data.precosGerados ?? []),
   };
 }
 
@@ -167,6 +205,7 @@ export function loadAppData(): AppData {
     { key: 'patrimonio', field: 'patrimonio' },
     { key: 'caixa', field: 'movimentosCaixa' },
     { key: 'banco', field: 'movimentosBanco' },
+    { key: 'precos', field: 'precosGerados' },
   ];
 
   for (const { key, field } of loaders) {
@@ -205,6 +244,7 @@ export function saveAppData(data: AppData): void {
   localStorage.setItem(STORAGE_KEYS.patrimonio, JSON.stringify(normalized.patrimonio));
   localStorage.setItem(STORAGE_KEYS.caixa, JSON.stringify(normalized.movimentosCaixa));
   localStorage.setItem(STORAGE_KEYS.banco, JSON.stringify(normalized.movimentosBanco));
+  localStorage.setItem(STORAGE_KEYS.precos, JSON.stringify(normalized.precosGerados));
 }
 
 export function exportBackup(data: AppData): void {

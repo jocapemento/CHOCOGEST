@@ -56,6 +56,10 @@ export interface Producao {
   unidade: string;
   ingredientes: Array<{ nome: string; quantidade: number; valorUnit: number; unidade?: string }>;
   custoEstimado: number;
+  /** Perda calculada: entrada − saída (mesma unidade). */
+  quantidadePerdida?: number;
+  /** Perda percentual calculada a partir da entrada e da saída. */
+  percentualPerda?: number;
 }
 
 export interface CartaoModel {
@@ -93,6 +97,16 @@ export interface MovimentoFinanceiro {
   banco?: string;
 }
 
+export interface PrecoGerado {
+  id: number;
+  data: string;
+  produto: string;
+  unidade: string;
+  custoUnitario: number;
+  margemLucro: number;
+  precoSugerido: number;
+}
+
 export interface AppData {
   estoque: EstoqueItem[];
   compras: Compra[];
@@ -103,6 +117,7 @@ export interface AppData {
   patrimonio: PatrimonioItem[];
   movimentosCaixa: MovimentoFinanceiro[];
   movimentosBanco: MovimentoFinanceiro[];
+  precosGerados: PrecoGerado[];
 }
 
 export const TIPOS_ITEM: TipoItem[] = [
@@ -126,6 +141,7 @@ export const STORAGE_KEYS = {
   patrimonio: 'chocogest_patrimonio',
   caixa: 'chocogest_caixa',
   banco: 'chocogest_banco',
+  precos: 'chocogest_precos',
 } as const;
 
 export const EMPTY_DATA: AppData = {
@@ -138,4 +154,5 @@ export const EMPTY_DATA: AppData = {
   patrimonio: [],
   movimentosCaixa: [],
   movimentosBanco: [],
+  precosGerados: [],
 };

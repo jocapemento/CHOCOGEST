@@ -10,6 +10,7 @@ import type {
   ItemMovimentacao,
   MovimentoFinanceiro,
   PatrimonioItem,
+  PrecoGerado,
   Producao,
   TipoItem,
   Venda,
@@ -25,10 +26,14 @@ import {
 } from '@/lib/cartoes';
 import {
   agruparEstoque,
+  calcularPerdaProducao,
   catalogoItensLancados,
+  catalogoNomesProdutos,
   catalogoProdutosProduzidos,
   quantidadeDisponivel,
   saldoIngrediente,
+  totalEntradaIngredientes,
+  totalizarPerdasPorProduto,
   totalVendidoProduto,
   validarIngredientesProducao,
   vendasDoProduto,
@@ -426,10 +431,15 @@ const PRODUCAO_FORM_INICIAL = {
   data: todayISO(),
   lote: '',
   produto: '',
-  quantidade: 1,
-  unidade: 'un',
+  quantidade: 0,
+  unidade: 'kg',
   ingredientes: [] as Array<{ nome: string; quantidade: number; valorUnit: number; unidade?: string }>,
 };
+
+function unidadeSugeridaProduto(producoes: Producao[], nome: string): string | undefined {
+  const registro = producoes.find((p) => p.produto.toLowerCase() === nome.toLowerCase());
+  return registro?.unidade;
+}
 
 const MOV_CAIXA_FORM_INICIAL = {
   data: todayISO(),
@@ -569,6 +579,7 @@ export default function ChocoGest() {
   const [novoBanco, setNovoBanco] = useState({ nome: '', agencia: '', conta: '' });
   const [margemLucro, setMargemLucro] = useState(40);
   const [produtoPreco, setProdutoPreco] = useState('');
+  const [dataPreco, setDataPreco] = useState(todayISO());
 
   useEffect(() => {
     const loaded = loadAppData();
@@ -583,6 +594,25 @@ export default function ChocoGest() {
   }, [data, hydrated]);
 
   const update = useCallback((fn: (prev: AppData) => AppData) => setData(fn), []);
+
+  const resumoPerdaProducao = useMemo(
+    () =>
+      calcularPerdaProducao({
+        ingredientes: novaProducao.ingredientes,
+        quantidade: novaProducao.quantidade,
+      }),
+    [novaProducao.ingredientes, novaProducao.quantidade]
+  );
+
+  const catalogoProdutosProducao = useMemo(
+    () => catalogoNomesProdutos(data.producoes),
+    [data.producoes]
+  );
+
+  const totalPerdasPorProduto = useMemo(
+    () => totalizarPerdasPorProduto(data.producoes),
+    [data.producoes]
+  );
 
   const produtosParaVenda = useMemo(
     () => catalogoProdutosProduzidos(data.producoes, data.estoque),
@@ -931,6 +961,7 @@ export default function ChocoGest() {
         ...p.ingredientes,
         { ...ingredienteForm, unidade: item.unidade },
       ],
+      unidade: p.ingredientes.length === 0 ? item.unidade : p.unidade,
     }));
     setIngredienteForm({ nome: '', quantidade: 0, valorUnit: 0 });
   };
@@ -1021,7 +1052,27 @@ export default function ChocoGest() {
       return alert('Preencha produto e ingredientes.');
     }
     if (novaProducao.quantidade <= 0) {
-      return alert('Informe uma quantidade válida.');
+      return alert('Informe a quantidade do produto gerado.');
+    }
+
+    const perdaCalculada = calcularPerdaProducao({
+      ingredientes: novaProducao.ingredientes,
+      quantidade: novaProducao.quantidade,
+    });
+    if (!perdaCalculada) {
+      return alert(
+        'Não foi possível calcular a perda. Lance a matéria-prima e use a mesma unidade em todos os ingredientes.'
+      );
+    }
+    if (novaProducao.quantidade > perdaCalculada.entrada) {
+      return alert(
+        `A quantidade produzida (${novaProducao.quantidade} ${perdaCalculada.unidade}) não pode ser maior que a matéria-prima lançada (${perdaCalculada.entrada} ${perdaCalculada.unidade}).`
+      );
+    }
+    if (novaProducao.unidade.trim().toLowerCase() !== perdaCalculada.unidade.toLowerCase()) {
+      return alert(
+        `A unidade do produto ("${novaProducao.unidade}") deve ser a mesma da matéria-prima ("${perdaCalculada.unidade}").`
+      );
     }
 
     const custoEstimado = sumBy(
@@ -1038,6 +1089,8 @@ export default function ChocoGest() {
       unidade: novaProducao.unidade,
       ingredientes: novaProducao.ingredientes,
       custoEstimado,
+      quantidadePerdida: perdaCalculada.perdaQuantidade,
+      percentualPerda: perdaCalculada.perdaPercentual,
     };
 
     if (editando) {
@@ -1299,6 +1352,43 @@ export default function ChocoGest() {
     alert(editando ? 'Lançamento atualizado!' : 'Lançamento registrado!');
   };
 
+  const registrarPreco = () => {
+    if (!produtoPreco.trim()) {
+      return alert('Selecione um produto acabado.');
+    }
+    if (!produtoSelecionado) {
+      return alert('Produto não encontrado no estoque.');
+    }
+    if (margemLucro < 0) {
+      return alert('Informe uma margem de lucro válida.');
+    }
+
+    const registro: PrecoGerado = {
+      id: nextId(data.precosGerados),
+      data: normalizeDateISO(dataPreco),
+      produto: produtoPreco,
+      unidade: produtoSelecionado.unidade,
+      custoUnitario: custoProduto,
+      margemLucro,
+      precoSugerido,
+    };
+
+    update((prev) => ({
+      ...prev,
+      precosGerados: [...prev.precosGerados, registro],
+    }));
+
+    alert(`Preço de ${produtoPreco} registrado: ${formatCurrency(precoSugerido)}`);
+  };
+
+  const removerPreco = (id: number) => {
+    if (!confirm('Remover este registro de preço?')) return;
+    update((prev) => ({
+      ...prev,
+      precosGerados: prev.precosGerados.filter((p) => p.id !== id),
+    }));
+  };
+
   const handleImportBackup = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -1331,6 +1421,15 @@ export default function ChocoGest() {
   const produtoSelecionado = produtosAcabados.find((p) => p.nome === produtoPreco);
   const custoProduto = produtoSelecionado ? produtoSelecionado.valorUnit : 0;
   const precoSugerido = custoProduto * (1 + margemLucro / 100);
+
+  const precosExibidos = useMemo(() => {
+    const lista = produtoPreco
+      ? data.precosGerados.filter((p) => p.produto.toLowerCase() === produtoPreco.toLowerCase())
+      : data.precosGerados;
+    return [...lista].sort((a, b) => b.data.localeCompare(a.data) || b.id - a.id);
+  }, [data.precosGerados, produtoPreco]);
+
+  const ultimoPrecoProduto = precosExibidos[0];
 
   if (!hydrated) {
     return (
@@ -1819,18 +1918,22 @@ export default function ChocoGest() {
                     Editando produção #{producaoEditandoId}
                   </p>
                 )}
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
                   <DateField
                     label="Data da produção"
                     value={novaProducao.data}
                     onChange={(data) => setNovaProducao((p) => ({ ...p, data }))}
                   />
-                  <Field label="Lote"><input className={inputCls} value={novaProducao.lote} onChange={(e) => setNovaProducao((p) => ({ ...p, lote: e.target.value }))} /></Field>
-                  <Field label="Produto"><input className={inputCls} value={novaProducao.produto} onChange={(e) => setNovaProducao((p) => ({ ...p, produto: e.target.value }))} /></Field>
-                  <Field label="Quantidade"><input type="number" className={inputCls} value={novaProducao.quantidade} onChange={(e) => setNovaProducao((p) => ({ ...p, quantidade: +e.target.value }))} /></Field>
-                  <Field label="Unidade"><input className={inputCls} value={novaProducao.unidade} onChange={(e) => setNovaProducao((p) => ({ ...p, unidade: e.target.value }))} /></Field>
+                  <Field label="Lote">
+                    <input
+                      className={inputCls}
+                      value={novaProducao.lote}
+                      onChange={(e) => setNovaProducao((p) => ({ ...p, lote: e.target.value }))}
+                    />
+                  </Field>
                 </div>
-                <h4 className="text-amber-200 mb-2">Ingredientes</h4>
+
+                <h4 className="text-amber-200 mb-2">1. Matéria-prima (entrada)</h4>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
                   <Field label="Ingrediente">
                     <select className={inputCls} value={ingredienteForm.nome} onChange={(e) => {
@@ -1850,7 +1953,7 @@ export default function ChocoGest() {
                 </div>
                 <Btn variant="secondary" onClick={adicionarIngrediente}>+ Ingrediente</Btn>
                 {novaProducao.ingredientes.length > 0 && (
-                  <div className="mt-3 text-sm space-y-1">
+                  <div className="mt-3 text-sm space-y-1 mb-6">
                     {novaProducao.ingredientes.map((ing, idx) => (
                       <div key={idx} className="flex justify-between items-center text-amber-200 gap-2">
                         <span>{ing.nome}: {ing.quantidade} {ing.unidade ?? 'kg'} — {formatCurrency(ing.quantidade * ing.valorUnit)}</span>
@@ -1859,6 +1962,69 @@ export default function ChocoGest() {
                     ))}
                   </div>
                 )}
+
+                <h4 className="text-amber-200 mb-2">2. Produto gerado (saída)</h4>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
+                  <Field label="Produto">
+                    <input
+                      list="catalogo-produtos-producao"
+                      className={inputCls}
+                      value={novaProducao.produto}
+                      onChange={(e) => {
+                        const nome = e.target.value;
+                        const unidade = unidadeSugeridaProduto(data.producoes, nome);
+                        setNovaProducao((p) => ({
+                          ...p,
+                          produto: nome,
+                          unidade: unidade ?? p.unidade,
+                        }));
+                      }}
+                      placeholder="Selecione ou digite um produto"
+                    />
+                    <datalist id="catalogo-produtos-producao">
+                      {catalogoProdutosProducao.map((nome) => (
+                        <option key={nome} value={nome} />
+                      ))}
+                    </datalist>
+                  </Field>
+                  <Field label="Quantidade produzida">
+                    <input
+                      type="number"
+                      step="0.001"
+                      min={0}
+                      className={inputCls}
+                      value={novaProducao.quantidade || ''}
+                      onChange={(e) =>
+                        setNovaProducao((p) => ({ ...p, quantidade: +e.target.value }))
+                      }
+                    />
+                  </Field>
+                  <Field label="Unidade">
+                    <input
+                      className={inputCls}
+                      value={novaProducao.unidade}
+                      onChange={(e) => setNovaProducao((p) => ({ ...p, unidade: e.target.value }))}
+                    />
+                  </Field>
+                </div>
+
+                {resumoPerdaProducao && novaProducao.quantidade > 0 && (
+                  <p className="text-sm text-amber-300/90 mb-4 bg-amber-950/40 border border-amber-800/50 rounded-lg px-3 py-2">
+                    Entrada: <strong>{resumoPerdaProducao.entrada} {resumoPerdaProducao.unidade}</strong>
+                    {' → '}
+                    Saída: <strong>{resumoPerdaProducao.saida} {resumoPerdaProducao.unidade}</strong>
+                    {' — '}
+                    Perda: <strong>{resumoPerdaProducao.perdaQuantidade} {resumoPerdaProducao.unidade}</strong>
+                    {' '}({resumoPerdaProducao.perdaPercentual}%)
+                  </p>
+                )}
+                {novaProducao.ingredientes.length > 0 &&
+                  !totalEntradaIngredientes(novaProducao.ingredientes) && (
+                    <p className="text-sm text-amber-400 mb-4">
+                      Para calcular a perda, todos os ingredientes devem usar a mesma unidade.
+                    </p>
+                  )}
+
                 <div className="flex flex-wrap gap-3 mt-4">
                   <Btn onClick={registrarProducao}>
                     {producaoEditandoId !== null ? 'Salvar alterações' : 'Registrar Produção'}
@@ -1874,6 +2040,7 @@ export default function ChocoGest() {
                     <thead><tr className="text-amber-300 border-b border-amber-700">
                       <th className="text-left py-2">Data</th><th className="text-left py-2">Lote</th>
                       <th className="text-left py-2">Produto</th><th className="text-right py-2">Qtd</th>
+                      <th className="text-right py-2">Perda</th>
                       <th className="text-right py-2">Custo</th>
                       <th className="text-right py-2 w-32">Ações</th>
                     </tr></thead>
@@ -1887,6 +2054,18 @@ export default function ChocoGest() {
                           <td className="py-2">{p.lote}</td>
                           <td className="py-2">{p.produto}</td>
                           <td className="py-2 text-right">{p.quantidade} {p.unidade}</td>
+                          <td className="py-2 text-right text-amber-300/80">
+                            {p.quantidadePerdida && p.quantidadePerdida > 0 ? (
+                              <>
+                                {p.percentualPerda ?? 0}%
+                                <span className="block text-xs text-amber-400/60">
+                                  −{p.quantidadePerdida} {p.unidade}
+                                </span>
+                              </>
+                            ) : (
+                              '—'
+                            )}
+                          </td>
                           <td className="py-2 text-right">{formatCurrency(p.custoEstimado)}</td>
                           <td className="py-2 text-right whitespace-nowrap">
                             <Btn variant="secondary" onClick={() => editarProducao(p)}>Editar</Btn>
@@ -1900,6 +2079,44 @@ export default function ChocoGest() {
                 </div>
                 {data.producoes.length === 0 && <p className="text-amber-400/60 py-4">Nenhuma produção registrada.</p>}
               </Card>
+
+              <Card className="mt-6">
+                <h3 className="text-lg font-semibold text-amber-200 mb-4">Totalização de perdas por produto</h3>
+                {totalPerdasPorProduto.length > 0 ? (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm min-w-[560px]">
+                      <thead>
+                        <tr className="text-amber-300 border-b border-amber-700">
+                          <th className="text-left py-2">Produto</th>
+                          <th className="text-right py-2">Lançamentos</th>
+                          <th className="text-right py-2">Entrada total</th>
+                          <th className="text-right py-2">Saída total</th>
+                          <th className="text-right py-2">Perda total</th>
+                          <th className="text-right py-2">Perda média</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {totalPerdasPorProduto.map((item) => (
+                          <tr key={`${item.produto}-${item.unidade}`} className="border-b border-amber-800/30">
+                            <td className="py-2">{item.produto}</td>
+                            <td className="py-2 text-right">{item.lancamentos}</td>
+                            <td className="py-2 text-right">{item.entradaTotal} {item.unidade}</td>
+                            <td className="py-2 text-right">{item.saidaTotal} {item.unidade}</td>
+                            <td className="py-2 text-right text-amber-300/80">
+                              −{item.perdaTotal} {item.unidade}
+                            </td>
+                            <td className="py-2 text-right">{item.perdaPercentualMedia}%</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <p className="text-amber-400/60 py-2">
+                    Nenhuma perda registrada ainda. Lance matéria-prima e produto gerado para o sistema calcular.
+                  </p>
+                )}
+              </Card>
             </div>
           )}
 
@@ -1907,8 +2124,8 @@ export default function ChocoGest() {
           {activeTab === 'precificacao' && (
             <div>
               <SectionTitle>Precificação</SectionTitle>
-              <Card>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+              <Card className="mb-6">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
                   <Field label="Produto Acabado">
                     <select className={inputCls} value={produtoPreco} onChange={(e) => setProdutoPreco(e.target.value)}>
                       <option value="">Selecione...</option>
@@ -1918,12 +2135,18 @@ export default function ChocoGest() {
                   <Field label="Margem de Lucro (%)">
                     <input type="number" className={inputCls} value={margemLucro} onChange={(e) => setMargemLucro(+e.target.value)} />
                   </Field>
+                  <DateField
+                    label="Data do registro"
+                    value={dataPreco}
+                    onChange={setDataPreco}
+                  />
                 </div>
                 {produtoSelecionado && (
                   <div className="mt-6 grid grid-cols-1 sm:grid-cols-3 gap-4">
                     <div className="bg-[#2c2118] rounded-xl p-4">
                       <div className="text-amber-300 text-sm">Custo Unitário</div>
                       <div className="text-2xl font-bold">{formatCurrency(custoProduto)}</div>
+                      <div className="text-xs text-amber-400/70 mt-1">por {produtoSelecionado.unidade}</div>
                     </div>
                     <div className="bg-[#2c2118] rounded-xl p-4">
                       <div className="text-amber-300 text-sm">Margem ({margemLucro}%)</div>
@@ -1932,11 +2155,73 @@ export default function ChocoGest() {
                     <div className="bg-amber-700/30 rounded-xl p-4 border border-amber-500">
                       <div className="text-amber-200 text-sm">Preço Sugerido</div>
                       <div className="text-3xl font-bold text-amber-50">{formatCurrency(precoSugerido)}</div>
+                      <div className="text-xs text-amber-200/70 mt-1">por {produtoSelecionado.unidade}</div>
                     </div>
                   </div>
                 )}
+                {ultimoPrecoProduto && produtoPreco && (
+                  <p className="mt-4 text-sm text-amber-300/80">
+                    Último preço registrado para <strong>{produtoPreco}</strong>:{' '}
+                    <strong>{formatCurrency(ultimoPrecoProduto.precoSugerido)}</strong> em{' '}
+                    {formatDate(ultimoPrecoProduto.data)} (margem {ultimoPrecoProduto.margemLucro}%)
+                  </p>
+                )}
+                <div className="mt-4">
+                  <Btn onClick={registrarPreco}>Registrar preço</Btn>
+                </div>
                 {produtosAcabados.length === 0 && (
                   <p className="mt-4 text-amber-400/60">Cadastre produtos acabados no estoque ou via produção.</p>
+                )}
+              </Card>
+
+              <Card>
+                <h3 className="text-lg font-semibold text-amber-200 mb-4">
+                  {produtoPreco
+                    ? `Histórico de preços — ${produtoPreco}`
+                    : 'Histórico de preços gerados'}
+                </h3>
+                {precosExibidos.length > 0 ? (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm min-w-[640px]">
+                      <thead>
+                        <tr className="text-amber-300 border-b border-amber-700">
+                          <th className="text-left py-2">Data</th>
+                          {!produtoPreco && <th className="text-left py-2">Produto</th>}
+                          <th className="text-right py-2">Custo</th>
+                          <th className="text-right py-2">Margem</th>
+                          <th className="text-right py-2">Preço</th>
+                          <th className="text-right py-2 w-24">Ações</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {precosExibidos.map((p) => (
+                          <tr key={p.id} className="border-b border-amber-800/30">
+                            <td className="py-2">{formatDate(p.data)}</td>
+                            {!produtoPreco && <td className="py-2">{p.produto}</td>}
+                            <td className="py-2 text-right">
+                              {formatCurrency(p.custoUnitario)}
+                              <span className="text-xs text-amber-400/60"> /{p.unidade}</span>
+                            </td>
+                            <td className="py-2 text-right">{p.margemLucro}%</td>
+                            <td className="py-2 text-right font-semibold text-amber-100">
+                              {formatCurrency(p.precoSugerido)}
+                            </td>
+                            <td className="py-2 text-right">
+                              <Btn variant="danger" className="px-2 py-1" onClick={() => removerPreco(p.id)}>
+                                Excluir
+                              </Btn>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <p className="text-amber-400/60 py-2">
+                    {produtoPreco
+                      ? `Nenhum preço registrado para ${produtoPreco} ainda.`
+                      : 'Nenhum preço registrado ainda. Calcule e clique em "Registrar preço".'}
+                  </p>
                 )}
               </Card>
             </div>

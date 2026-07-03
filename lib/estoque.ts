@@ -151,6 +151,113 @@ export function catalogoItensLancados(compras: Compra[], estoque: EstoqueItem[])
   return Array.from(map.values()).sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
 }
 
+export function totalEntradaIngredientes(
+  ingredientes: Producao['ingredientes']
+): { total: number; unidade: string } | null {
+  if (ingredientes.length === 0) return null;
+
+  const unidade = ingredientes[0].unidade ?? 'kg';
+  for (const ing of ingredientes) {
+    const u = ing.unidade ?? 'kg';
+    if (u.toLowerCase() !== unidade.toLowerCase()) return null;
+  }
+
+  const total = ingredientes.reduce((acc, ing) => acc + ing.quantidade, 0);
+  return { total, unidade };
+}
+
+export interface PerdaProducao {
+  entrada: number;
+  unidade: string;
+  saida: number;
+  perdaQuantidade: number;
+  perdaPercentual: number;
+}
+
+function arredondarQuantidade(valor: number): number {
+  return Math.round(valor * 1000) / 1000;
+}
+
+export function calcularPerdaProducao(
+  producao: Pick<Producao, 'ingredientes' | 'quantidade'>
+): PerdaProducao | null {
+  const entradaInfo = totalEntradaIngredientes(producao.ingredientes);
+  if (!entradaInfo || entradaInfo.total <= 0) return null;
+
+  const saida = arredondarQuantidade(producao.quantidade);
+  const perdaQuantidade = arredondarQuantidade(Math.max(0, entradaInfo.total - saida));
+  const perdaPercentual =
+    entradaInfo.total > 0
+      ? arredondarQuantidade((perdaQuantidade / entradaInfo.total) * 100)
+      : 0;
+
+  return {
+    entrada: entradaInfo.total,
+    unidade: entradaInfo.unidade,
+    saida,
+    perdaQuantidade,
+    perdaPercentual,
+  };
+}
+
+export function catalogoNomesProdutos(producoes: Producao[]): string[] {
+  const nomes = new Set<string>();
+  for (const p of producoes) {
+    const nome = p.produto.trim();
+    if (nome) nomes.add(nome);
+  }
+  return Array.from(nomes).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+}
+
+export interface TotalPerdaProduto {
+  produto: string;
+  unidade: string;
+  lancamentos: number;
+  entradaTotal: number;
+  saidaTotal: number;
+  perdaTotal: number;
+  perdaPercentualMedia: number;
+}
+
+export function totalizarPerdasPorProduto(producoes: Producao[]): TotalPerdaProduto[] {
+  const map = new Map<string, TotalPerdaProduto>();
+
+  for (const p of producoes) {
+    const perda = calcularPerdaProducao(p);
+    if (!perda || perda.perdaQuantidade <= 0) continue;
+
+    const key = `${p.produto.toLowerCase()}|${perda.unidade.toLowerCase()}`;
+    const existing = map.get(key);
+
+    if (existing) {
+      const entradaTotal = existing.entradaTotal + perda.entrada;
+      const saidaTotal = existing.saidaTotal + perda.saida;
+      const perdaTotal = existing.perdaTotal + perda.perdaQuantidade;
+      map.set(key, {
+        ...existing,
+        lancamentos: existing.lancamentos + 1,
+        entradaTotal: arredondarQuantidade(entradaTotal),
+        saidaTotal: arredondarQuantidade(saidaTotal),
+        perdaTotal: arredondarQuantidade(perdaTotal),
+        perdaPercentualMedia:
+          entradaTotal > 0 ? arredondarQuantidade((perdaTotal / entradaTotal) * 100) : 0,
+      });
+    } else {
+      map.set(key, {
+        produto: p.produto,
+        unidade: perda.unidade,
+        lancamentos: 1,
+        entradaTotal: perda.entrada,
+        saidaTotal: perda.saida,
+        perdaTotal: perda.perdaQuantidade,
+        perdaPercentualMedia: perda.perdaPercentual,
+      });
+    }
+  }
+
+  return Array.from(map.values()).sort((a, b) => a.produto.localeCompare(b.produto, 'pt-BR'));
+}
+
 export function catalogoProdutosProduzidos(producoes: Producao[], estoque: EstoqueItem[]): SaldoEstoque[] {
   const nomes = new Set<string>();
   for (const p of producoes) {
