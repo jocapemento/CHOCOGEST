@@ -5,14 +5,19 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Actions internas rodam em Node 24 nos runners — evita incompatibilidade forçada
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 permissions:
   contents: read
   pages: write
   id-token: write
 
+# Não cancelar deploy em andamento (evita "Deployment failed, try again later")
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -43,9 +48,10 @@ jobs:
           grep -q "ChocoGest" out/index.html
 
       - name: Publicar artefato
-        uses: actions/upload-pages-artifact@v4
+        uses: actions/upload-pages-artifact@v3
         with:
           path: ./out
+          include-hidden-files: true
 
   deploy:
     needs: build
@@ -58,5 +64,23 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: Deploy via GitHub Actions
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+  deploy-retry:
+    needs: [build, deploy]
+    if: failure() && needs.deploy.result == 'failure'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Aguardar estabilização do Pages API
+        run: sleep 45
+
+      - name: Repetir deploy
         id: deployment
         uses: actions/deploy-pages@v4
