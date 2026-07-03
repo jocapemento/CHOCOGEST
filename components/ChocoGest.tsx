@@ -23,7 +23,7 @@ import {
   totalParcelasMes,
   valorParcelaNoMes,
 } from '@/lib/cartoes';
-import { agruparEstoque, catalogoItensLancados } from '@/lib/estoque';
+import { agruparEstoque, catalogoItensLancados, catalogoProdutosProduzidos } from '@/lib/estoque';
 import { formatCurrency, formatDate, formatMesAno, mesAtualISO, nextId, sumBy, todayISO } from '@/lib/format';
 import {
   gerarPdfCompras,
@@ -458,6 +458,11 @@ export default function ChocoGest() {
 
   const update = useCallback((fn: (prev: AppData) => AppData) => setData(fn), []);
 
+  const produtosParaVenda = useMemo(
+    () => catalogoProdutosProduzidos(data.producoes, data.estoque),
+    [data.producoes, data.estoque]
+  );
+
   const catalogoItensCompra = useMemo(
     () => catalogoItensLancados(data.compras, data.estoque),
     [data.compras, data.estoque]
@@ -653,8 +658,10 @@ export default function ChocoGest() {
   };
 
   const adicionarItemVenda = () => {
-    const saldo = agruparEstoque(data.estoque).find((e) => e.nome.toLowerCase() === itemVenda.nome.toLowerCase());
-    if (!saldo) return alert('Item não encontrado no estoque.');
+    const saldo = catalogoProdutosProduzidos(data.producoes, data.estoque).find(
+      (e) => e.nome.toLowerCase() === itemVenda.nome.toLowerCase()
+    );
+    if (!saldo) return alert('Selecione um produto produzido com saldo disponível.');
     if (itemVenda.quantidade <= 0) return alert('Informe uma quantidade válida.');
     if (itemVenda.quantidade > saldo.quantidade) {
       return alert(`Quantidade indisponível. Saldo atual: ${saldo.quantidade} ${saldo.unidade}.`);
@@ -1462,14 +1469,41 @@ export default function ChocoGest() {
                     </select>
                   </Field>
                 </div>
-                <div className="grid grid-cols-3 gap-3 mb-3">
-                  <select className={inputCls} value={itemVenda.nome} onChange={(e) => setItemVenda({ ...itemVenda, nome: e.target.value })}>
-                    <option value="">Selecione item...</option>
-                    {saldoEstoque.map((e) => <option key={e.nome} value={e.nome}>{e.nome} ({e.quantidade} {e.unidade})</option>)}
-                  </select>
-                  <input type="number" placeholder="Qtd" className={inputCls} value={itemVenda.quantidade} onChange={(e) => setItemVenda({ ...itemVenda, quantidade: +e.target.value })} />
-                  <input type="number" step="0.01" placeholder="Preço R$" className={inputCls} value={itemVenda.valorUnit} onChange={(e) => setItemVenda({ ...itemVenda, valorUnit: +e.target.value })} />
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
+                  <Field label="Produto">
+                    <select
+                      className={inputCls}
+                      value={itemVenda.nome}
+                      onChange={(e) => {
+                        const nome = e.target.value;
+                        const saldo = produtosParaVenda.find((p) => p.nome === nome);
+                        setItemVenda({
+                          nome,
+                          quantidade: 1,
+                          valorUnit: saldo?.valorUnit ?? 0,
+                        });
+                      }}
+                    >
+                      <option value="">Selecione produto...</option>
+                      {produtosParaVenda.map((e) => (
+                        <option key={e.nome} value={e.nome}>
+                          {e.nome} ({e.quantidade} {e.unidade})
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field label="Quantidade">
+                    <input type="number" className={inputCls} value={itemVenda.quantidade} onChange={(e) => setItemVenda({ ...itemVenda, quantidade: +e.target.value })} />
+                  </Field>
+                  <Field label="Preço (R$)">
+                    <input type="number" step="0.01" className={inputCls} value={itemVenda.valorUnit} onChange={(e) => setItemVenda({ ...itemVenda, valorUnit: +e.target.value })} />
+                  </Field>
                 </div>
+                {produtosParaVenda.length === 0 && (
+                  <p className="text-amber-400/60 text-sm mb-3">
+                    Nenhum produto de Produção com saldo. Registre uma produção primeiro.
+                  </p>
+                )}
                 <Btn variant="secondary" onClick={adicionarItemVenda}>+ Item</Btn>
                 {novaVenda.itens.length > 0 && (
                   <div className="mt-4 text-sm space-y-1">

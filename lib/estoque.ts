@@ -1,4 +1,4 @@
-import type { Compra, EstoqueItem, TipoItem } from '@/lib/types';
+import type { Compra, EstoqueItem, Producao, TipoItem } from '@/lib/types';
 
 export interface SaldoEstoque {
   nome: string;
@@ -78,4 +78,15 @@ export function catalogoItensLancados(compras: Compra[], estoque: EstoqueItem[])
   }
 
   return Array.from(map.values()).sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+}
+
+export function catalogoProdutosProduzidos(producoes: Producao[], estoque: EstoqueItem[]): SaldoEstoque[] {
+  const nomes = new Set<string>();
+  for (const p of producoes) {
+    const nome = p.produto.trim();
+    if (nome) nomes.add(nome.toLowerCase());
+  }
+  return agruparEstoque(estoque)
+    .filter((s) => nomes.has(s.nome.toLowerCase()) && s.quantidade > 0)
+    .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
 }
