@@ -200,13 +200,60 @@ export function calcularPerdaProducao(
   };
 }
 
-export function catalogoNomesProdutos(producoes: Producao[]): string[] {
+export function nomesProdutosGerados(producoes: Producao[]): Set<string> {
   const nomes = new Set<string>();
   for (const p of producoes) {
     const nome = p.produto.trim();
-    if (nome) nomes.add(nome);
+    if (nome) nomes.add(nome.toLowerCase());
   }
-  return Array.from(nomes).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  return nomes;
+}
+
+export function isProdutoGerado(nome: string, producoes: Producao[]): boolean {
+  return nomesProdutosGerados(producoes).has(nome.toLowerCase());
+}
+
+export function filtrarSaldoMateriaPrima(saldo: SaldoEstoque[]): SaldoEstoque[] {
+  return saldo
+    .filter((s) => s.tipo === 'MateriaPrima')
+    .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+}
+
+export function filtrarSaldoProdutosGerados(
+  saldo: SaldoEstoque[],
+  producoes: Producao[]
+): SaldoEstoque[] {
+  const nomes = nomesProdutosGerados(producoes);
+  return saldo
+    .filter((s) => nomes.has(s.nome.toLowerCase()))
+    .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+}
+
+export function filtrarLancamentosMateriaPrima(estoque: EstoqueItem[]): EstoqueItem[] {
+  return estoque
+    .filter((e) => e.quantidade > 0 && e.tipo === 'MateriaPrima')
+    .sort((a, b) => (b.data ?? '').localeCompare(a.data ?? '') || b.id - a.id);
+}
+
+export function filtrarLancamentosProdutosGerados(
+  estoque: EstoqueItem[],
+  producoes: Producao[]
+): EstoqueItem[] {
+  const nomes = nomesProdutosGerados(producoes);
+  return estoque
+    .filter((e) => e.quantidade > 0 && nomes.has(e.nome.toLowerCase()))
+    .sort((a, b) => (b.data ?? '').localeCompare(a.data ?? '') || b.id - a.id);
+}
+
+export function catalogoNomesProdutos(producoes: Producao[]): string[] {
+  const map = new Map<string, string>();
+  for (const p of producoes) {
+    const nome = p.produto.trim();
+    if (!nome) continue;
+    const key = nome.toLowerCase();
+    if (!map.has(key)) map.set(key, nome);
+  }
+  return Array.from(map.values()).sort((a, b) => a.localeCompare(b, 'pt-BR'));
 }
 
 export interface TotalPerdaProduto {

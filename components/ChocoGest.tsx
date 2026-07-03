@@ -30,6 +30,10 @@ import {
   catalogoItensLancados,
   catalogoNomesProdutos,
   catalogoProdutosProduzidos,
+  filtrarLancamentosMateriaPrima,
+  filtrarLancamentosProdutosGerados,
+  filtrarSaldoMateriaPrima,
+  filtrarSaldoProdutosGerados,
   quantidadeDisponivel,
   saldoIngrediente,
   totalEntradaIngredientes,
@@ -1407,13 +1411,13 @@ export default function ChocoGest() {
 
   // Derived
   const saldoEstoque = agruparEstoque(data.estoque);
-  const valorEstoque = sumBy(saldoEstoque, (i) => i.quantidade * i.valorUnit);
-  const lancamentosEstoque = [...data.estoque]
-    .filter((e) => e.quantidade > 0)
-    .sort((a, b) => {
-      const dataCmp = (b.data ?? '').localeCompare(a.data ?? '');
-      return dataCmp !== 0 ? dataCmp : b.id - a.id;
-    });
+  const saldoMateriaPrima = filtrarSaldoMateriaPrima(saldoEstoque);
+  const saldoProdutosGerados = filtrarSaldoProdutosGerados(saldoEstoque, data.producoes);
+  const valorMateriaPrima = sumBy(saldoMateriaPrima, (i) => i.quantidade * i.valorUnit);
+  const valorProdutosGerados = sumBy(saldoProdutosGerados, (i) => i.quantidade * i.valorUnit);
+  const valorEstoque = valorMateriaPrima + valorProdutosGerados;
+  const lancamentosMateriaPrima = filtrarLancamentosMateriaPrima(data.estoque);
+  const lancamentosProdutosGerados = filtrarLancamentosProdutosGerados(data.estoque, data.producoes);
   const saldoCaixa = calcSaldo(data.movimentosCaixa);
   const saldoBanco = calcSaldo(data.movimentosBanco);
   const valorPatrimonio = sumBy(data.patrimonio, (p) => p.valorAtual);
@@ -1506,21 +1510,68 @@ export default function ChocoGest() {
               </SectionTitle>
               <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-8">
                 {[
-                  { label: 'Valor Estoque', value: formatCurrency(valorEstoque), icon: '📦' },
+                  { label: 'Matéria-Prima', value: formatCurrency(valorMateriaPrima), icon: '🌰', detalhe: `${saldoMateriaPrima.length} itens` },
+                  { label: 'Produtos Gerados', value: formatCurrency(valorProdutosGerados), icon: '🍫', detalhe: `${saldoProdutosGerados.length} itens` },
                   { label: 'Total Vendas', value: formatCurrency(sumBy(data.vendas, (v) => v.total)), icon: '🛒' },
                   { label: 'Saldo Caixa', value: formatCurrency(saldoCaixa), icon: '💰' },
                   { label: 'Saldo Banco', value: formatCurrency(saldoBanco), icon: '🏦' },
                   { label: 'Patrimônio', value: formatCurrency(valorPatrimonio), icon: '🏛️' },
                   { label: 'Compras', value: formatCurrency(sumBy(data.compras, (c) => c.total)), icon: '🚚' },
                   { label: 'Produções', value: data.producoes.length.toString(), icon: '🏭' },
-                  { label: 'Itens Estoque', value: saldoEstoque.length.toString(), icon: '📋' },
                 ].map((kpi) => (
                   <Card key={kpi.label}>
                     <div className="text-2xl mb-1">{kpi.icon}</div>
                     <div className="text-amber-300 text-sm">{kpi.label}</div>
                     <div className="text-xl font-bold text-amber-50">{kpi.value}</div>
+                    {'detalhe' in kpi && kpi.detalhe && (
+                      <div className="text-xs text-amber-400/70 mt-1">{kpi.detalhe}</div>
+                    )}
                   </Card>
                 ))}
+              </div>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+                <Card>
+                  <h3 className="font-semibold text-amber-200 mb-3">Matérias-primas em estoque</h3>
+                  {saldoMateriaPrima.length > 0 ? (
+                    <div className="space-y-2 text-sm">
+                      {saldoMateriaPrima.map((item) => (
+                        <div key={item.nome} className="flex justify-between py-2 border-b border-amber-800/30">
+                          <span>{item.nome}</span>
+                          <span className="text-amber-300">
+                            {item.quantidade} {item.unidade} — {formatCurrency(item.quantidade * item.valorUnit)}
+                          </span>
+                        </div>
+                      ))}
+                      <div className="flex justify-between pt-2 font-semibold text-amber-100">
+                        <span>Total</span>
+                        <span>{formatCurrency(valorMateriaPrima)}</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-amber-400/60 text-sm">Nenhuma matéria-prima em estoque.</p>
+                  )}
+                </Card>
+                <Card>
+                  <h3 className="font-semibold text-amber-200 mb-3">Produtos gerados em estoque</h3>
+                  {saldoProdutosGerados.length > 0 ? (
+                    <div className="space-y-2 text-sm">
+                      {saldoProdutosGerados.map((item) => (
+                        <div key={item.nome} className="flex justify-between py-2 border-b border-amber-800/30">
+                          <span>{item.nome}</span>
+                          <span className="text-amber-300">
+                            {item.quantidade} {item.unidade} — {formatCurrency(item.quantidade * item.valorUnit)}
+                          </span>
+                        </div>
+                      ))}
+                      <div className="flex justify-between pt-2 font-semibold text-amber-100">
+                        <span>Total</span>
+                        <span>{formatCurrency(valorProdutosGerados)}</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-amber-400/60 text-sm">Nenhum produto gerado em estoque.</p>
+                  )}
+                </Card>
               </div>
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <Card>
@@ -1564,9 +1615,10 @@ export default function ChocoGest() {
                   <Field label="Nome">
                     <input className={inputCls} value={novoItem.nome} onChange={(e) => setNovoItem((p) => ({ ...p, nome: e.target.value }))} />
                   </Field>
-                  <Field label="Tipo">
+                  <Field label="Categoria">
                     <select className={inputCls} value={novoItem.tipo} onChange={(e) => setNovoItem((p) => ({ ...p, tipo: e.target.value as TipoItem }))}>
-                      {TIPOS_ITEM.map((t) => <option key={t} value={t}>{t}</option>)}
+                      <option value="MateriaPrima">Matéria-Prima</option>
+                      <option value="ProdutoAcabado">Produto Gerado</option>
                     </select>
                   </Field>
                   <Field label="Quantidade">
@@ -1585,23 +1637,21 @@ export default function ChocoGest() {
                 <Btn className="mt-4" onClick={adicionarItemEstoque}>Adicionar ao Estoque</Btn>
               </Card>
               <Card className="mb-6">
-                <h4 className="text-amber-200 font-medium mb-4">Saldo disponível</h4>
+                <h4 className="text-amber-200 font-medium mb-4">Saldo — Matérias-primas</h4>
                 <div className="overflow-x-auto">
-                  <table className="w-full text-sm min-w-[560px]">
+                  <table className="w-full text-sm min-w-[520px]">
                     <thead>
                       <tr className="text-amber-300 border-b border-amber-700">
                         <th className="text-left py-2">Nome</th>
-                        <th className="text-left py-2">Tipo</th>
                         <th className="text-right py-2">Qtd Total</th>
                         <th className="text-right py-2">Valor Médio</th>
                         <th className="text-right py-2">Total</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {saldoEstoque.map((item) => (
+                      {saldoMateriaPrima.map((item) => (
                         <tr key={item.nome} className="border-b border-amber-800/30">
                           <td className="py-2">{item.nome}</td>
-                          <td className="py-2 text-amber-300">{item.tipo}</td>
                           <td className="py-2 text-right">{item.quantidade} {item.unidade}</td>
                           <td className="py-2 text-right">{formatCurrency(item.valorUnit)}</td>
                           <td className="py-2 text-right">{formatCurrency(item.quantidade * item.valorUnit)}</td>
@@ -1610,23 +1660,63 @@ export default function ChocoGest() {
                     </tbody>
                     <tfoot>
                       <tr className="font-bold text-amber-100">
-                        <td colSpan={4} className="py-3 text-right">Valor total em estoque:</td>
-                        <td className="py-3 text-right">{formatCurrency(valorEstoque)}</td>
+                        <td colSpan={3} className="py-3 text-right">Total matérias-primas:</td>
+                        <td className="py-3 text-right">{formatCurrency(valorMateriaPrima)}</td>
                       </tr>
                     </tfoot>
                   </table>
-                  {saldoEstoque.length === 0 && <p className="text-amber-400/60 py-4">Nenhum saldo disponível.</p>}
+                  {saldoMateriaPrima.length === 0 && (
+                    <p className="text-amber-400/60 py-4">Nenhuma matéria-prima em estoque.</p>
+                  )}
                 </div>
               </Card>
-              <Card>
-                <h4 className="text-amber-200 font-medium mb-4">Lançamentos</h4>
+              <Card className="mb-6">
+                <h4 className="text-amber-200 font-medium mb-4">Saldo — Produtos gerados</h4>
                 <div className="overflow-x-auto">
-                  <table className="w-full text-sm min-w-[640px]">
+                  <table className="w-full text-sm min-w-[520px]">
+                    <thead>
+                      <tr className="text-amber-300 border-b border-amber-700">
+                        <th className="text-left py-2">Nome</th>
+                        <th className="text-right py-2">Qtd Total</th>
+                        <th className="text-right py-2">Valor Médio</th>
+                        <th className="text-right py-2">Total</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {saldoProdutosGerados.map((item) => (
+                        <tr key={item.nome} className="border-b border-amber-800/30">
+                          <td className="py-2">{item.nome}</td>
+                          <td className="py-2 text-right">{item.quantidade} {item.unidade}</td>
+                          <td className="py-2 text-right">{formatCurrency(item.valorUnit)}</td>
+                          <td className="py-2 text-right">{formatCurrency(item.quantidade * item.valorUnit)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="font-bold text-amber-100">
+                        <td colSpan={3} className="py-3 text-right">Total produtos gerados:</td>
+                        <td className="py-3 text-right">{formatCurrency(valorProdutosGerados)}</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                  {saldoProdutosGerados.length === 0 && (
+                    <p className="text-amber-400/60 py-4">
+                      Nenhum produto gerado em estoque. Registre produções para aparecer aqui.
+                    </p>
+                  )}
+                </div>
+                <p className="text-amber-400/70 text-xs mt-3">
+                  Valor total operacional: <strong>{formatCurrency(valorEstoque)}</strong>
+                </p>
+              </Card>
+              <Card className="mb-6">
+                <h4 className="text-amber-200 font-medium mb-4">Lançamentos — Matérias-primas</h4>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm min-w-[600px]">
                     <thead>
                       <tr className="text-amber-300 border-b border-amber-700">
                         <th className="text-left py-2">Data</th>
                         <th className="text-left py-2">Nome</th>
-                        <th className="text-left py-2">Tipo</th>
                         <th className="text-right py-2">Qtd</th>
                         <th className="text-right py-2">Valor Unit.</th>
                         <th className="text-right py-2">Total</th>
@@ -1634,11 +1724,10 @@ export default function ChocoGest() {
                       </tr>
                     </thead>
                     <tbody>
-                      {lancamentosEstoque.map((item) => (
+                      {lancamentosMateriaPrima.map((item) => (
                         <tr key={item.id} className="border-b border-amber-800/30">
                           <td className="py-2 text-amber-300">{formatDate(item.data ?? '')}</td>
                           <td className="py-2">{item.nome}</td>
-                          <td className="py-2 text-amber-300">{item.tipo}</td>
                           <td className="py-2 text-right">{item.quantidade} {item.unidade}</td>
                           <td className="py-2 text-right">{formatCurrency(item.valorUnit)}</td>
                           <td className="py-2 text-right">{formatCurrency(item.quantidade * item.valorUnit)}</td>
@@ -1649,7 +1738,43 @@ export default function ChocoGest() {
                       ))}
                     </tbody>
                   </table>
-                  {lancamentosEstoque.length === 0 && <p className="text-amber-400/60 py-4">Nenhum lançamento registrado.</p>}
+                  {lancamentosMateriaPrima.length === 0 && (
+                    <p className="text-amber-400/60 py-4">Nenhum lançamento de matéria-prima.</p>
+                  )}
+                </div>
+              </Card>
+              <Card>
+                <h4 className="text-amber-200 font-medium mb-4">Lançamentos — Produtos gerados</h4>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm min-w-[600px]">
+                    <thead>
+                      <tr className="text-amber-300 border-b border-amber-700">
+                        <th className="text-left py-2">Data</th>
+                        <th className="text-left py-2">Nome</th>
+                        <th className="text-right py-2">Qtd</th>
+                        <th className="text-right py-2">Valor Unit.</th>
+                        <th className="text-right py-2">Total</th>
+                        <th className="py-2"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {lancamentosProdutosGerados.map((item) => (
+                        <tr key={item.id} className="border-b border-amber-800/30">
+                          <td className="py-2 text-amber-300">{formatDate(item.data ?? '')}</td>
+                          <td className="py-2">{item.nome}</td>
+                          <td className="py-2 text-right">{item.quantidade} {item.unidade}</td>
+                          <td className="py-2 text-right">{formatCurrency(item.valorUnit)}</td>
+                          <td className="py-2 text-right">{formatCurrency(item.quantidade * item.valorUnit)}</td>
+                          <td className="py-2 text-right">
+                            <Btn variant="danger" onClick={() => removerItemEstoque(item.id)}>✕</Btn>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {lancamentosProdutosGerados.length === 0 && (
+                    <p className="text-amber-400/60 py-4">Nenhum lançamento de produto gerado.</p>
+                  )}
                 </div>
               </Card>
             </div>

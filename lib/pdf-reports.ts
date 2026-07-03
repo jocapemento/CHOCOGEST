@@ -1,6 +1,12 @@
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { agruparEstoque } from './estoque';
+import {
+  agruparEstoque,
+  filtrarLancamentosMateriaPrima,
+  filtrarLancamentosProdutosGerados,
+  filtrarSaldoMateriaPrima,
+  filtrarSaldoProdutosGerados,
+} from './estoque';
 import type { AppData } from './types';
 import { formatCurrency, formatDate, sumBy } from './format';
 
@@ -23,53 +29,80 @@ function savePdf(doc: jsPDF, filename: string) {
   doc.save(filename);
 }
 
-export function gerarPdfEstoque(data: AppData) {
-  const doc = new jsPDF();
-  addHeader(doc, 'Relatório de Estoque');
-
-  const saldo = agruparEstoque(data.estoque);
-  const lancamentos = [...data.estoque]
-    .filter((e) => e.quantidade > 0)
-    .sort((a, b) => (b.data ?? '').localeCompare(a.data ?? '') || b.id - a.id);
-
-  const saldoRows = saldo.map((item) => [
+function tabelaSaldoPdf(
+  doc: jsPDF,
+  titulo: string,
+  saldo: ReturnType<typeof agruparEstoque>,
+  startY: number
+) {
+  const rows = saldo.map((item) => [
     item.nome,
-    item.tipo,
     `${item.quantidade} ${item.unidade}`,
     formatCurrency(item.valorUnit),
     formatCurrency(item.quantidade * item.valorUnit),
   ]);
+  const total = sumBy(saldo, (i) => i.quantidade * i.valorUnit);
 
-  const totalSaldo = sumBy(saldo, (i) => i.quantidade * i.valorUnit);
+  doc.setFontSize(11);
+  doc.setTextColor(120, 53, 15);
+  doc.text(titulo, 14, startY);
 
   autoTable(doc, {
-    startY: 52,
-    head: [['Item', 'Tipo', 'Qtd Total', 'Valor Médio', 'Total']],
-    body: saldoRows,
-    foot: [['', '', '', 'Valor total em estoque', formatCurrency(totalSaldo)]],
+    startY: startY + 4,
+    head: [['Item', 'Qtd Total', 'Valor Médio', 'Total']],
+    body: rows,
+    foot: [['', '', 'Total', formatCurrency(total)]],
     theme: 'grid',
     headStyles: { fillColor: [180, 83, 9] },
     footStyles: { fillColor: [254, 243, 199], textColor: [60, 40, 30], fontStyle: 'bold' },
   });
 
-  const lancamentoRows = lancamentos.map((item) => [
+  return (doc as jsPDF & { lastAutoTable: { finalY: number } }).lastAutoTable.finalY;
+}
+
+function tabelaLancamentosPdf(
+  doc: jsPDF,
+  titulo: string,
+  lancamentos: AppData['estoque'],
+  startY: number
+) {
+  const rows = lancamentos.map((item) => [
     formatDate(item.data ?? ''),
     item.nome,
-    item.tipo,
     `${item.quantidade} ${item.unidade}`,
     formatCurrency(item.valorUnit),
     formatCurrency(item.quantidade * item.valorUnit),
   ]);
 
+  doc.setFontSize(11);
+  doc.setTextColor(120, 53, 15);
+  doc.text(titulo, 14, startY);
+
   autoTable(doc, {
-    startY: (doc as jsPDF & { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY
-      ? (doc as jsPDF & { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 14
-      : 52,
-    head: [['Data', 'Item', 'Tipo', 'Quantidade', 'Valor Unit.', 'Total']],
-    body: lancamentoRows,
+    startY: startY + 4,
+    head: [['Data', 'Item', 'Quantidade', 'Valor Unit.', 'Total']],
+    body: rows,
     theme: 'grid',
     headStyles: { fillColor: [120, 53, 15] },
   });
+
+  return (doc as jsPDF & { lastAutoTable: { finalY: number } }).lastAutoTable.finalY;
+}
+
+export function gerarPdfEstoque(data: AppData) {
+  const doc = new jsPDF();
+  addHeader(doc, 'Relatório de Estoque');
+
+  const saldo = agruparEstoque(data.estoque);
+  const saldoMateriaPrima = filtrarSaldoMateriaPrima(saldo);
+  const saldoProdutosGerados = filtrarSaldoProdutosGerados(saldo, data.producoes);
+  const lancamentosMateriaPrima = filtrarLancamentosMateriaPrima(data.estoque);
+  const lancamentosProdutosGerados = filtrarLancamentosProdutosGerados(data.estoque, data.producoes);
+
+  let y = tabelaSaldoPdf(doc, 'Matérias-primas', saldoMateriaPrima, 52);
+  y = tabelaSaldoPdf(doc, 'Produtos gerados', saldoProdutosGerados, y + 12);
+  y = tabelaLancamentosPdf(doc, 'Lançamentos — Matérias-primas', lancamentosMateriaPrima, y + 12);
+  tabelaLancamentosPdf(doc, 'Lançamentos — Produtos gerados', lancamentosProdutosGerados, y + 12);
 
   savePdf(doc, `estoque-${new Date().toISOString().slice(0, 10)}.pdf`);
 }
@@ -187,7 +220,11 @@ export function gerarPdfDashboard(data: AppData) {
   addHeader(doc, 'Resumo Geral');
 
   const saldoEstoque = agruparEstoque(data.estoque);
-  const valorEstoque = sumBy(saldoEstoque, (i) => i.quantidade * i.valorUnit);
+  const saldoMateriaPrima = filtrarSaldoMateriaPrima(saldoEstoque);
+  const saldoProdutosGerados = filtrarSaldoProdutosGerados(saldoEstoque, data.producoes);
+  const valorMateriaPrima = sumBy(saldoMateriaPrima, (i) => i.quantidade * i.valorUnit);
+  const valorProdutosGerados = sumBy(saldoProdutosGerados, (i) => i.quantidade * i.valorUnit);
+  const valorEstoque = valorMateriaPrima + valorProdutosGerados;
   const totalCompras = sumBy(data.compras, (c) => c.total);
   const totalVendas = sumBy(data.vendas, (v) => v.total);
   const saldoCaixa =
@@ -202,8 +239,11 @@ export function gerarPdfDashboard(data: AppData) {
     startY: 52,
     head: [['Indicador', 'Valor']],
     body: [
-      ['Itens em estoque', saldoEstoque.length.toString()],
-      ['Valor total do estoque', formatCurrency(valorEstoque)],
+      ['Itens matéria-prima', saldoMateriaPrima.length.toString()],
+      ['Valor matéria-prima', formatCurrency(valorMateriaPrima)],
+      ['Itens produtos gerados', saldoProdutosGerados.length.toString()],
+      ['Valor produtos gerados', formatCurrency(valorProdutosGerados)],
+      ['Valor total operacional', formatCurrency(valorEstoque)],
       ['Total de compras', formatCurrency(totalCompras)],
       ['Total de vendas', formatCurrency(totalVendas)],
       ['Saldo em caixa', formatCurrency(saldoCaixa)],
