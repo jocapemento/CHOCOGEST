@@ -20,10 +20,14 @@ O workflow `.github/workflows/deploy-pages.yml` gera o site estático e publica 
 ### Configuração (uma vez)
 
 1. Abra **Settings → Pages → Build and deployment**
-2. Em **Source**, escolha **GitHub Actions**
+2. Em **Source**, escolha **GitHub Actions** (recomendado)
 3. Salve
 
-**Importante:** com **Deploy from branch** (`gh-pages`), o site **não atualiza** automaticamente após cada push — o token do Actions não dispara o rebuild. Use **GitHub Actions** como fonte.
+**Se o site sumiu (404)** depois de tornar o repositório privado e voltar para público: o GitHub **desativa** o Pages — é preciso repetir o passo 2 acima e rodar o workflow **Deploy GitHub Pages** em Actions (ou dar push na `main`).
+
+Em **Settings → Actions → General**, confirme **Workflow permissions: Read and write**.
+
+**Alternativa:** **Deploy from branch** → `gh-pages` / `(root)` — o workflow também atualiza essa branch a cada push.
 
 **Não use** a branch `main` como fonte — isso publica o README em vez do app.
 

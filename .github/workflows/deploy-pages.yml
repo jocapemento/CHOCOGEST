@@ -5,16 +5,14 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# Actions internas rodam em Node 24 nos runners — evita incompatibilidade forçada
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
-# Não cancelar deploy em andamento (evita "Deployment failed, try again later")
 concurrency:
   group: pages
   cancel-in-progress: false
@@ -51,7 +49,13 @@ jobs:
         uses: actions/upload-pages-artifact@v3
         with:
           path: ./out
-          include-hidden-files: true
+
+      - name: Guardar build para branch gh-pages
+        uses: actions/upload-artifact@v4
+        with:
+          name: chocogest-static
+          path: out
+          retention-days: 1
 
   deploy:
     needs: build
@@ -63,24 +67,43 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      - name: Aguardar Pages API (apos mudanca de visibilidade)
+        run: sleep 30
+
       - name: Deploy via GitHub Actions
         id: deployment
         uses: actions/deploy-pages@v4
+        continue-on-error: true
 
-  deploy-retry:
-    needs: [build, deploy]
-    if: failure() && needs.deploy.result == 'failure'
-    runs-on: ubuntu-latest
-    permissions:
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - name: Aguardar estabilização do Pages API
+      - name: Aguardar estabilizacao
+        if: steps.deployment.outcome == 'failure'
         run: sleep 45
 
       - name: Repetir deploy
-        id: deployment
+        if: steps.deployment.outcome == 'failure'
+        id: deployment_retry
         uses: actions/deploy-pages@v4
+
+      - name: Falhar se deploy nao concluiu
+        if: steps.deployment.outcome == 'failure' && steps.deployment_retry.outcome != 'success'
+        run: exit 1
+
+  publish-gh-pages:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Baixar build estatico
+        uses: actions/download-artifact@v4
+        with:
+          name: chocogest-static
+          path: out
+
+      - name: Publicar na branch gh-pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./out
+          publish_branch: gh-pages
+          force_orphan: true
