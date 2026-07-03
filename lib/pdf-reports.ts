@@ -114,8 +114,10 @@ export function gerarPdfCompras(data: AppData) {
   const rows = data.compras.map((c) => [
     formatDate(c.data),
     c.fornecedor,
+    c.itens.length > 0
+      ? c.itens.map((i) => `${i.nome} (${i.quantidade} ${i.unidade})`).join(', ')
+      : '—',
     c.formaPagamento,
-    c.itens.length.toString(),
     formatCurrency(c.total),
   ]);
 
@@ -123,7 +125,7 @@ export function gerarPdfCompras(data: AppData) {
 
   autoTable(doc, {
     startY: 52,
-    head: [['Data', 'Fornecedor', 'Pagamento', 'Itens', 'Total']],
+    head: [['Data', 'Fornecedor', 'Itens', 'Pagamento', 'Total']],
     body: rows,
     foot: [['', '', '', 'Total', formatCurrency(total)]],
     theme: 'grid',

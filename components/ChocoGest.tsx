@@ -1877,11 +1877,12 @@ export default function ChocoGest() {
               <Card>
                 <h4 className="text-amber-200 font-medium mb-4">Histórico de compras</h4>
                 <div className="overflow-x-auto">
-                  <table className="w-full text-sm min-w-[640px]">
+                  <table className="w-full text-sm min-w-[800px]">
                     <thead>
                       <tr className="text-amber-300 border-b border-amber-700">
                         <th className="text-left py-2">Data</th>
                         <th className="text-left py-2">Fornecedor</th>
+                        <th className="text-left py-2">Itens</th>
                         <th className="text-left py-2">Pagamento</th>
                         <th className="text-right py-2">Total</th>
                         <th className="text-right py-2 w-32">Ações</th>
@@ -1895,6 +1896,19 @@ export default function ChocoGest() {
                         >
                           <td className="py-2">{formatDate(c.data)}</td>
                           <td className="py-2">{c.fornecedor}</td>
+                          <td className="py-2 text-amber-200/90">
+                            {c.itens.length > 0 ? (
+                              <div className="space-y-1">
+                                {c.itens.map((i) => (
+                                  <div key={i.id}>
+                                    {i.nome} — {i.quantidade} {i.unidade}
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              '—'
+                            )}
+                          </td>
                           <td className="py-2">{c.formaPagamento}{c.cartao ? ` (${c.cartao})` : ''}</td>
                           <td className="py-2 text-right">{formatCurrency(c.total)}</td>
                           <td className="py-2 text-right whitespace-nowrap">
