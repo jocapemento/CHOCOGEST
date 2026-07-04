@@ -46,6 +46,19 @@ export function ultimoPrecoRegistrado(
     .sort((a, b) => b.data.localeCompare(a.data) || b.id - a.id)[0];
 }
 
+/** Preço unitário para venda: prioriza o último preço registrado em Precificação. */
+export function precoUnitarioParaVenda(
+  precosGerados: PrecoGerado[],
+  produto: string,
+  custoUnitario = 0
+): { valor: number; origem: 'precificacao' | 'custo'; registro?: PrecoGerado } {
+  const registro = ultimoPrecoRegistrado(precosGerados, produto);
+  if (registro && registro.precoSugerido > 0) {
+    return { valor: registro.precoSugerido, origem: 'precificacao', registro };
+  }
+  return { valor: custoUnitario, origem: 'custo' };
+}
+
 export function totalizarProdutosPrecificados(
   estoque: AppData['estoque'],
   producoes: Producao[],

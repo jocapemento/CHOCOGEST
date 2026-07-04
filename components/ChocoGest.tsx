@@ -51,7 +51,7 @@ import {
   validarIngredientesProducao,
   vendasDoProduto,
 } from '@/lib/estoque';
-import { totalizarProdutosPrecificados } from '@/lib/precificacao';
+import { precoUnitarioParaVenda, totalizarProdutosPrecificados } from '@/lib/precificacao';
 import {
   brlParaUsd,
   formatCurrency,
@@ -894,6 +894,11 @@ export default function ChocoGest() {
     );
   };
 
+  const resolverValorUnitarioVenda = (nome: string, precoInformado: number, custoUnitario: number) => {
+    if (precoInformado > 0) return precoInformado;
+    return precoUnitarioParaVenda(data.precosGerados, nome, custoUnitario).valor;
+  };
+
   const adicionarItemVenda = () => {
     const saldo = catalogoProdutosProduzidos(data.producoes, data.estoque).find(
       (e) => e.nome.toLowerCase() === itemVenda.nome.toLowerCase()
@@ -903,13 +908,19 @@ export default function ChocoGest() {
     if (itemVenda.quantidade > saldo.quantidade) {
       return alert(`Quantidade indisponível. Saldo atual: ${saldo.quantidade} ${saldo.unidade}.`);
     }
+    const valorUnit = resolverValorUnitarioVenda(saldo.nome, itemVenda.valorUnit, saldo.valorUnit);
+    if (valorUnit <= 0) {
+      return alert(
+        `Informe o preço de venda ou registre "${saldo.nome}" na aba Precificação antes de vender.`
+      );
+    }
     const item: ItemMovimentacao = {
       id: nextId(novaVenda.itens),
       nome: saldo.nome,
       tipo: saldo.tipo,
       quantidade: itemVenda.quantidade,
       unidade: saldo.unidade,
-      valorUnit: itemVenda.valorUnit || saldo.valorUnit,
+      valorUnit,
     };
     setNovaVenda((p) => ({ ...p, itens: [...p.itens, item] }));
     setItemVenda({ nome: '', quantidade: 1, valorUnit: 0 });
@@ -2178,19 +2189,33 @@ export default function ChocoGest() {
                       onChange={(e) => {
                         const nome = e.target.value;
                         const saldo = produtosParaVenda.find((p) => p.nome === nome);
+                        const preco = nome
+                          ? precoUnitarioParaVenda(
+                              data.precosGerados,
+                              nome,
+                              saldo?.valorUnit ?? 0
+                            )
+                          : null;
                         setItemVenda({
                           nome,
                           quantidade: 1,
-                          valorUnit: saldo?.valorUnit ?? 0,
+                          valorUnit: preco?.valor ?? 0,
                         });
                       }}
                     >
                       <option value="">Selecione produto...</option>
-                      {produtosParaVenda.map((e) => (
-                        <option key={e.nome} value={e.nome}>
-                          {e.nome} ({e.quantidade} {e.unidade})
-                        </option>
-                      ))}
+                      {produtosParaVenda.map((e) => {
+                        const preco = precoUnitarioParaVenda(data.precosGerados, e.nome, e.valorUnit);
+                        const precoLabel =
+                          preco.origem === 'precificacao'
+                            ? formatCurrency(preco.valor)
+                            : `${formatCurrency(e.valorUnit)} (custo)`;
+                        return (
+                          <option key={e.nome} value={e.nome}>
+                            {e.nome} ({e.quantidade} {e.unidade}) — {precoLabel}
+                          </option>
+                        );
+                      })}
                     </select>
                   </Field>
                   <Field label="Quantidade">
@@ -2200,6 +2225,30 @@ export default function ChocoGest() {
                     <input type="number" step="0.01" className={inputCls} value={itemVenda.valorUnit} onChange={(e) => setItemVenda({ ...itemVenda, valorUnit: +e.target.value })} />
                   </Field>
                 </div>
+                {itemVenda.nome && (() => {
+                  const saldo = produtosParaVenda.find((p) => p.nome === itemVenda.nome);
+                  const preco = precoUnitarioParaVenda(
+                    data.precosGerados,
+                    itemVenda.nome,
+                    saldo?.valorUnit ?? 0
+                  );
+                  if (preco.origem === 'precificacao' && preco.registro) {
+                    return (
+                      <p className="text-amber-300/80 text-xs mb-3">
+                        Preço da Precificação: <strong>{formatCurrency(preco.valor)}</strong> por{' '}
+                        {preco.registro.unidade} (registrado em {formatDate(preco.registro.data)},
+                        margem {preco.registro.margemLucro}%)
+                      </p>
+                    );
+                  }
+                  return (
+                    <p className="text-amber-400/70 text-xs mb-3">
+                      Sem preço em Precificação para <strong>{itemVenda.nome}</strong>. Usando custo
+                      de estoque ({formatCurrency(saldo?.valorUnit ?? 0)}) — registre o preço na aba
+                      Precificação.
+                    </p>
+                  );
+                })()}
                 {produtosParaVenda.length === 0 && (
                   <p className="text-amber-400/60 text-sm mb-3">
                     Nenhum produto de Produção com saldo. Registre uma produção primeiro.
