@@ -26,6 +26,7 @@ import {
 } from '@/lib/cartoes';
 import {
   agruparEstoque,
+  baixarEstoqueFifo,
   calcularPerdaProducao,
   catalogoItensLancados,
   catalogoNomesProdutos,
@@ -156,28 +157,8 @@ function atualizarEstoqueCompra(
   return updated;
 }
 
-function atualizarEstoqueVenda(estoque: EstoqueItem[], itens: ItemMovimentacao[]): EstoqueItem[] {
-  const updated = estoque.map((e) => ({ ...e }));
-
-  for (const item of itens) {
-    let restante = item.quantidade;
-
-    for (let i = 0; i < updated.length && restante > 0; i++) {
-      if (updated[i].nome.toLowerCase() !== item.nome.toLowerCase() || updated[i].quantidade <= 0) {
-        continue;
-      }
-
-      const baixa = Math.min(updated[i].quantidade, restante);
-      updated[i] = { ...updated[i], quantidade: updated[i].quantidade - baixa };
-      restante -= baixa;
-    }
-  }
-
-  return updated.filter((e) => e.quantidade > 0);
-}
-
 function reverterEstoqueCompra(estoque: EstoqueItem[], itens: ItemMovimentacao[]): EstoqueItem[] {
-  return atualizarEstoqueVenda(estoque, itens);
+  return baixarEstoqueFifo(estoque, itens);
 }
 
 function removerPatrimonioCompra(patrimonio: PatrimonioItem[], compraId: number): PatrimonioItem[] {
@@ -355,13 +336,13 @@ function produtoProducaoParaItem(producao: Producao): ItemMovimentacao {
 function aplicarEfeitosProducao(estoque: EstoqueItem[], producao: Producao): EstoqueItem[] {
   let updated = estoque;
   for (const item of ingredientesProducaoParaItens(updated, producao.ingredientes)) {
-    updated = atualizarEstoqueVenda(updated, [item]);
+    updated = baixarEstoqueFifo(updated, [item]);
   }
   return atualizarEstoqueCompra(updated, [produtoProducaoParaItem(producao)], producao.data);
 }
 
 function reverterEfeitosProducao(estoque: EstoqueItem[], producao: Producao): EstoqueItem[] {
-  const updated = atualizarEstoqueVenda(estoque, [produtoProducaoParaItem(producao)]);
+  const updated = baixarEstoqueFifo(estoque, [produtoProducaoParaItem(producao)]);
   return atualizarEstoqueCompra(
     updated,
     ingredientesProducaoParaItens(updated, producao.ingredientes),
@@ -429,6 +410,15 @@ const VENDA_FORM_INICIAL = {
   cliente: '',
   formaPagamento: 'Dinheiro',
   itens: [] as ItemMovimentacao[],
+};
+
+const ITEM_ESTOQUE_FORM_INICIAL = {
+  nome: '',
+  tipo: 'MateriaPrima' as TipoItem,
+  quantidade: 0,
+  unidade: 'kg',
+  valorUnit: 0,
+  data: todayISO(),
 };
 
 const PRODUCAO_FORM_INICIAL = {
@@ -538,14 +528,8 @@ export default function ChocoGest() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Forms
-  const [novoItem, setNovoItem] = useState({
-    nome: '',
-    tipo: 'MateriaPrima' as TipoItem,
-    quantidade: 0,
-    unidade: 'kg',
-    valorUnit: 0,
-    data: todayISO(),
-  });
+  const [novoItem, setNovoItem] = useState({ ...ITEM_ESTOQUE_FORM_INICIAL });
+  const [estoqueEditandoId, setEstoqueEditandoId] = useState<number | null>(null);
   const [novaCompra, setNovaCompra] = useState({ ...COMPRA_FORM_INICIAL });
   const [compraEditandoId, setCompraEditandoId] = useState<number | null>(null);
   const [itemCompra, setItemCompra] = useState({
@@ -632,21 +616,74 @@ export default function ChocoGest() {
   const mesAtual = mesAtualISO();
 
   // --- Handlers ---
-  const adicionarItemEstoque = () => {
+  const resetFormEstoque = () => {
+    setNovoItem({ ...ITEM_ESTOQUE_FORM_INICIAL, data: todayISO() });
+    setEstoqueEditandoId(null);
+  };
+
+  const editarItemEstoque = (item: EstoqueItem) => {
+    setNovoItem({
+      nome: item.nome,
+      tipo: item.tipo,
+      quantidade: item.quantidade,
+      unidade: item.unidade,
+      valorUnit: item.valorUnit,
+      data: normalizeDateISO(item.data ?? todayISO()),
+    });
+    setEstoqueEditandoId(item.id);
+  };
+
+  const cancelarEdicaoEstoque = () => {
+    resetFormEstoque();
+  };
+
+  const salvarItemEstoque = () => {
     if (!novoItem.nome.trim()) return alert('Informe o nome do item.');
-    update((prev) => ({
-      ...prev,
-      estoque: [
-        ...prev.estoque,
-        { id: nextId(prev.estoque), ...novoItem, data: normalizeDateISO(novoItem.data) },
-      ],
-    }));
-    setNovoItem({ nome: '', tipo: 'MateriaPrima', quantidade: 0, unidade: 'kg', valorUnit: 0, data: todayISO() });
+    if (novoItem.quantidade <= 0) return alert('Informe uma quantidade maior que zero.');
+    if (novoItem.valorUnit < 0) return alert('O valor unitário não pode ser negativo.');
+
+    const dataOperacao = normalizeDateISO(novoItem.data);
+    const editando = estoqueEditandoId !== null;
+
+    update((prev) => {
+      if (editando) {
+        return {
+          ...prev,
+          estoque: prev.estoque.map((e) =>
+            e.id === estoqueEditandoId
+              ? {
+                  ...e,
+                  nome: novoItem.nome.trim(),
+                  tipo: novoItem.tipo,
+                  quantidade: novoItem.quantidade,
+                  unidade: novoItem.unidade,
+                  valorUnit: novoItem.valorUnit,
+                  data: dataOperacao,
+                }
+              : e
+          ),
+        };
+      }
+
+      return {
+        ...prev,
+        estoque: [
+          ...prev.estoque,
+          { id: nextId(prev.estoque), ...novoItem, nome: novoItem.nome.trim(), data: dataOperacao },
+        ],
+      };
+    });
+
+    resetFormEstoque();
+    alert(editando ? 'Lançamento atualizado com sucesso!' : 'Item adicionado ao estoque!');
   };
 
   const removerItemEstoque = (id: number) => {
     if (!confirm('Remover este item do estoque?')) return;
     update((prev) => ({ ...prev, estoque: prev.estoque.filter((e) => e.id !== id) }));
+    if (estoqueEditandoId === id) {
+      resetFormEstoque();
+    }
   };
 
   const preencherItemCompra = (nome: string) => {
@@ -896,7 +933,7 @@ export default function ChocoGest() {
 
     return {
       ...prev,
-      estoque: atualizarEstoqueVenda(prev.estoque, venda.itens),
+      estoque: baixarEstoqueFifo(prev.estoque, venda.itens),
       movimentosCaixa: movCaixa,
       movimentosBanco: movBanco,
     };
@@ -1605,7 +1642,14 @@ export default function ChocoGest() {
                 Estoque
               </SectionTitle>
               <Card className="mb-6">
-                <h3 className="font-semibold mb-4 text-amber-200">Novo Item</h3>
+                <h3 className="font-semibold mb-4 text-amber-200">
+                  {estoqueEditandoId !== null ? 'Editar lançamento' : 'Novo Item'}
+                </h3>
+                {estoqueEditandoId !== null && (
+                  <p className="text-amber-300 text-sm mb-4">
+                    Editando lançamento #{estoqueEditandoId}
+                  </p>
+                )}
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                   <DateField
                     label="Data da operação"
@@ -1617,12 +1661,13 @@ export default function ChocoGest() {
                   </Field>
                   <Field label="Categoria">
                     <select className={inputCls} value={novoItem.tipo} onChange={(e) => setNovoItem((p) => ({ ...p, tipo: e.target.value as TipoItem }))}>
-                      <option value="MateriaPrima">Matéria-Prima</option>
-                      <option value="ProdutoAcabado">Produto Gerado</option>
+                      {TIPOS_ITEM.map((t) => (
+                        <option key={t} value={t}>{t}</option>
+                      ))}
                     </select>
                   </Field>
                   <Field label="Quantidade">
-                    <input type="number" className={inputCls} value={novoItem.quantidade} onChange={(e) => setNovoItem((p) => ({ ...p, quantidade: +e.target.value }))} />
+                    <input type="number" step="0.001" className={inputCls} value={novoItem.quantidade} onChange={(e) => setNovoItem((p) => ({ ...p, quantidade: +e.target.value }))} />
                   </Field>
                   <Field label="Unidade">
                     <input className={inputCls} value={novoItem.unidade} onChange={(e) => setNovoItem((p) => ({ ...p, unidade: e.target.value }))} />
@@ -1633,8 +1678,16 @@ export default function ChocoGest() {
                 </div>
                 <p className="text-amber-400/70 text-xs mt-2">
                   Cada inclusão gera um lançamento na lista. O saldo disponível é a soma dos lançamentos por item.
+                  {estoqueEditandoId !== null && ' Use Editar na tabela abaixo para corrigir quantidades de lançamentos existentes.'}
                 </p>
-                <Btn className="mt-4" onClick={adicionarItemEstoque}>Adicionar ao Estoque</Btn>
+                <div className="flex flex-wrap gap-2 mt-4">
+                  <Btn onClick={salvarItemEstoque}>
+                    {estoqueEditandoId !== null ? 'Salvar alterações' : 'Adicionar ao Estoque'}
+                  </Btn>
+                  {estoqueEditandoId !== null && (
+                    <Btn variant="secondary" onClick={cancelarEdicaoEstoque}>Cancelar</Btn>
+                  )}
+                </div>
               </Card>
               <Card className="mb-6">
                 <h4 className="text-amber-200 font-medium mb-4">Saldo — Matérias-primas</h4>
@@ -1725,14 +1778,20 @@ export default function ChocoGest() {
                     </thead>
                     <tbody>
                       {lancamentosMateriaPrima.map((item) => (
-                        <tr key={item.id} className="border-b border-amber-800/30">
+                        <tr
+                          key={item.id}
+                          className={`border-b border-amber-800/30 ${estoqueEditandoId === item.id ? 'bg-amber-900/30' : ''}`}
+                        >
                           <td className="py-2 text-amber-300">{formatDate(item.data ?? '')}</td>
                           <td className="py-2">{item.nome}</td>
                           <td className="py-2 text-right">{item.quantidade} {item.unidade}</td>
                           <td className="py-2 text-right">{formatCurrency(item.valorUnit)}</td>
                           <td className="py-2 text-right">{formatCurrency(item.quantidade * item.valorUnit)}</td>
                           <td className="py-2 text-right">
-                            <Btn variant="danger" onClick={() => removerItemEstoque(item.id)}>✕</Btn>
+                            <div className="flex justify-end gap-2">
+                              <Btn variant="secondary" onClick={() => editarItemEstoque(item)}>Editar</Btn>
+                              <Btn variant="danger" onClick={() => removerItemEstoque(item.id)}>✕</Btn>
+                            </div>
                           </td>
                         </tr>
                       ))}
@@ -1759,14 +1818,20 @@ export default function ChocoGest() {
                     </thead>
                     <tbody>
                       {lancamentosProdutosGerados.map((item) => (
-                        <tr key={item.id} className="border-b border-amber-800/30">
+                        <tr
+                          key={item.id}
+                          className={`border-b border-amber-800/30 ${estoqueEditandoId === item.id ? 'bg-amber-900/30' : ''}`}
+                        >
                           <td className="py-2 text-amber-300">{formatDate(item.data ?? '')}</td>
                           <td className="py-2">{item.nome}</td>
                           <td className="py-2 text-right">{item.quantidade} {item.unidade}</td>
                           <td className="py-2 text-right">{formatCurrency(item.valorUnit)}</td>
                           <td className="py-2 text-right">{formatCurrency(item.quantidade * item.valorUnit)}</td>
                           <td className="py-2 text-right">
-                            <Btn variant="danger" onClick={() => removerItemEstoque(item.id)}>✕</Btn>
+                            <div className="flex justify-end gap-2">
+                              <Btn variant="secondary" onClick={() => editarItemEstoque(item)}>Editar</Btn>
+                              <Btn variant="danger" onClick={() => removerItemEstoque(item.id)}>✕</Btn>
+                            </div>
                           </td>
                         </tr>
                       ))}

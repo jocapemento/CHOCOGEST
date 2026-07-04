@@ -1,4 +1,4 @@
-import type { Compra, EstoqueItem, Producao, TipoItem, Venda } from '@/lib/types';
+import type { Compra, EstoqueItem, ItemMovimentacao, Producao, TipoItem, Venda } from '@/lib/types';
 
 export interface VendaComProduto {
   vendaId: number;
@@ -48,6 +48,41 @@ export function quantidadeDisponivel(estoque: EstoqueItem[], nome: string): numb
   return estoque
     .filter((e) => e.nome.toLowerCase() === nome.toLowerCase() && e.quantidade > 0)
     .reduce((acc, e) => acc + e.quantidade, 0);
+}
+
+function compararLancamentosFifo(a: EstoqueItem, b: EstoqueItem): number {
+  const dateCmp = (a.data ?? '').localeCompare(b.data ?? '');
+  if (dateCmp !== 0) return dateCmp;
+  return a.id - b.id;
+}
+
+/** Baixa quantidade do estoque pelo método FIFO (lançamento mais antigo primeiro). */
+export function baixarEstoqueFifo(
+  estoque: EstoqueItem[],
+  itens: ItemMovimentacao[]
+): EstoqueItem[] {
+  const updated = estoque.map((e) => ({ ...e }));
+
+  for (const item of itens) {
+    let restante = item.quantidade;
+    const nome = item.nome.toLowerCase();
+
+    const indices = updated
+      .map((entry, index) => ({ entry, index }))
+      .filter(({ entry }) => entry.nome.toLowerCase() === nome && entry.quantidade > 0)
+      .sort((a, b) => compararLancamentosFifo(a.entry, b.entry))
+      .map(({ index }) => index);
+
+    for (const index of indices) {
+      if (restante <= 0) break;
+
+      const baixa = Math.min(updated[index].quantidade, restante);
+      updated[index] = { ...updated[index], quantidade: updated[index].quantidade - baixa };
+      restante -= baixa;
+    }
+  }
+
+  return updated.filter((e) => e.quantidade > 0);
 }
 
 export function vendasDoProduto(vendas: Venda[], produto: string): VendaComProduto[] {
