@@ -8,6 +8,7 @@ import {
   filtrarSaldoProdutosGerados,
 } from './estoque';
 import { totalizarProdutosPrecificados } from './precificacao';
+import { formatarItensVenda, isVendaConcluida, rankingMelhoresClientes, STATUS_VENDA_LABEL } from './vendas';
 import type { AppData } from './types';
 import { formatCurrency, formatDate, sumBy } from './format';
 
@@ -144,22 +145,51 @@ export function gerarPdfVendas(data: AppData) {
   const rows = data.vendas.map((v) => [
     formatDate(v.data),
     v.cliente,
+    formatarItensVenda(v.itens),
+    STATUS_VENDA_LABEL[v.status ?? 'concluida'],
     v.formaPagamento,
-    v.itens.length.toString(),
     formatCurrency(v.total),
   ]);
 
-  const total = sumBy(data.vendas, (v) => v.total);
+  const totalConcluidas = sumBy(
+    data.vendas.filter((v) => isVendaConcluida(v)),
+    (v) => v.total
+  );
 
   autoTable(doc, {
     startY: 52,
-    head: [['Data', 'Cliente', 'Pagamento', 'Itens', 'Total']],
+    head: [['Data', 'Cliente', 'Itens (qtd)', 'Status', 'Pagamento', 'Total']],
     body: rows,
-    foot: [['', '', '', 'Total', formatCurrency(total)]],
+    foot: [['', '', '', '', 'Total concluídas', formatCurrency(totalConcluidas)]],
     theme: 'grid',
     headStyles: { fillColor: [180, 83, 9] },
     footStyles: { fillColor: [254, 243, 199], textColor: [60, 40, 30], fontStyle: 'bold' },
   });
+
+  const ranking = rankingMelhoresClientes(data.vendas);
+  if (ranking.length > 0) {
+    const lastTable = (doc as jsPDF & { lastAutoTable?: { finalY: number } }).lastAutoTable;
+    const startY = (lastTable?.finalY ?? 52) + 10;
+
+    doc.setFontSize(11);
+    doc.setTextColor(120, 53, 15);
+    doc.text('Melhores clientes', 14, startY);
+
+    autoTable(doc, {
+      startY: startY + 4,
+      head: [['#', 'Cliente', 'Vendas', 'Qtd total', 'Produtos', 'Valor total']],
+      body: ranking.map((c, idx) => [
+        String(idx + 1),
+        c.cliente,
+        String(c.vendasConcluidas),
+        String(c.quantidadeTotal),
+        c.produtos.map((p) => `${p.nome} ${p.quantidade}${p.unidade}`).join('; '),
+        formatCurrency(c.valorTotal),
+      ]),
+      theme: 'grid',
+      headStyles: { fillColor: [180, 83, 9] },
+    });
+  }
 
   savePdf(doc, `vendas-${new Date().toISOString().slice(0, 10)}.pdf`);
 }
@@ -229,7 +259,7 @@ export function gerarPdfDashboard(data: AppData) {
   const valorProdutosGerados = sumBy(saldoProdutosGerados, (i) => i.quantidade * i.valorUnit);
   const valorEstoque = valorMateriaPrima + valorProdutosGerados;
   const totalCompras = sumBy(data.compras, (c) => c.total);
-  const totalVendas = sumBy(data.vendas, (v) => v.total);
+  const totalVendas = sumBy(data.vendas.filter((v) => isVendaConcluida(v)), (v) => v.total);
   const saldoCaixa =
     sumBy(data.movimentosCaixa.filter((m) => m.tipo === 'entrada'), (m) => m.valor) -
     sumBy(data.movimentosCaixa.filter((m) => m.tipo === 'saida'), (m) => m.valor);

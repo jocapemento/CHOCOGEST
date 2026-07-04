@@ -38,11 +38,14 @@ export interface Compra {
   itens: ItemMovimentacao[];
 }
 
+export type StatusVenda = 'em_processamento' | 'concluida';
+
 export interface Venda {
   id: number;
   data: string;
   cliente: string;
   formaPagamento: string;
+  status?: StatusVenda;
   total: number;
   itens: ItemMovimentacao[];
 }

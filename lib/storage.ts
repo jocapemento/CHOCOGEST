@@ -113,6 +113,7 @@ function normalizeVendas(items: unknown[]): Venda[] {
       data: normalizeDateISO(item.data, todayISO()),
       cliente: item.cliente ?? '',
       formaPagamento: item.formaPagamento ?? 'Dinheiro',
+      status: item.status === 'em_processamento' ? 'em_processamento' : 'concluida',
       total: asNumber(item.total),
       itens: Array.isArray(item.itens) ? normalizeEstoque(item.itens) : [],
     };

@@ -13,6 +13,7 @@ import type {
   PrecoGerado,
   Producao,
   TipoItem,
+  StatusVenda,
   Venda,
 } from '@/lib/types';
 import { EMPTY_DATA, TIPOS_ITEM } from '@/lib/types';
@@ -52,6 +53,12 @@ import {
   vendasDoProduto,
 } from '@/lib/estoque';
 import { precoUnitarioParaVenda, totalizarProdutosPrecificados } from '@/lib/precificacao';
+import {
+  isVendaConcluida,
+  rankingMelhoresClientes,
+  STATUS_VENDA_LABEL,
+  validarEstoqueVenda,
+} from '@/lib/vendas';
 import {
   brlParaUsd,
   formatCurrency,
@@ -428,6 +435,7 @@ const VENDA_FORM_INICIAL = {
   data: todayISO(),
   cliente: '',
   formaPagamento: 'Dinheiro',
+  status: 'concluida' as StatusVenda,
   itens: [] as ItemMovimentacao[],
 };
 
@@ -945,6 +953,7 @@ export default function ChocoGest() {
       data: normalizeDateISO(venda.data),
       cliente: venda.cliente,
       formaPagamento: venda.formaPagamento,
+      status: venda.status ?? 'concluida',
       itens: venda.itens.map((i) => ({ ...i })),
     });
     setVendaEditandoId(venda.id);
@@ -963,7 +972,7 @@ export default function ChocoGest() {
     update((prev) => {
       const venda = prev.vendas.find((v) => v.id === id);
       if (!venda) return prev;
-      const reverted = reverterEfeitosVenda(prev, venda);
+      const reverted = isVendaConcluida(venda) ? reverterEfeitosVenda(prev, venda) : prev;
       return { ...reverted, vendas: reverted.vendas.filter((v) => v.id !== id) };
     });
 
@@ -1001,32 +1010,80 @@ export default function ChocoGest() {
     const venda: Venda = {
       id: editando ? vendaEditandoId : nextId(data.vendas),
       data: dataOperacao,
-      cliente: novaVenda.cliente,
+      cliente: novaVenda.cliente.trim(),
       formaPagamento: novaVenda.formaPagamento,
+      status: novaVenda.status,
       total,
       itens: novaVenda.itens,
     };
+
+    let estoqueBase = data.estoque;
+    if (editando) {
+      const antiga = data.vendas.find((v) => v.id === vendaEditandoId);
+      if (antiga && isVendaConcluida(antiga)) {
+        estoqueBase = reverterEfeitosVenda(data, antiga).estoque;
+      }
+    }
+    if (isVendaConcluida(venda)) {
+      const erro = validarEstoqueVenda(estoqueBase, venda);
+      if (erro) return alert(erro);
+    }
 
     update((prev) => {
       if (editando) {
         const antiga = prev.vendas.find((v) => v.id === vendaEditandoId);
         if (!antiga) return prev;
 
-        let state = reverterEfeitosVenda(prev, antiga);
-        state = aplicarEfeitosVenda(state, venda, dataOperacao);
-
-        return {
+        let state = isVendaConcluida(antiga) ? reverterEfeitosVenda(prev, antiga) : prev;
+        state = {
           ...state,
           vendas: state.vendas.map((v) => (v.id === vendaEditandoId ? venda : v)),
         };
+        if (isVendaConcluida(venda)) {
+          state = aplicarEfeitosVenda(state, venda, dataOperacao);
+        }
+        return state;
       }
 
-      const state = aplicarEfeitosVenda(prev, venda, dataOperacao);
-      return { ...state, vendas: [...state.vendas, venda] };
+      let state: AppData = { ...prev, vendas: [...prev.vendas, venda] };
+      if (isVendaConcluida(venda)) {
+        state = aplicarEfeitosVenda(state, venda, dataOperacao);
+      }
+      return state;
     });
 
     resetFormVenda();
-    alert(editando ? 'Venda atualizada com sucesso!' : 'Venda registrada com sucesso!');
+    alert(
+      editando
+        ? 'Venda atualizada com sucesso!'
+        : isVendaConcluida(venda)
+          ? 'Venda concluída e registrada!'
+          : 'Pedido registrado em processamento.'
+    );
+  };
+
+  const concluirVenda = (id: number) => {
+    const venda = data.vendas.find((v) => v.id === id);
+    if (!venda || isVendaConcluida(venda)) return;
+
+    const vendaConcluida: Venda = { ...venda, status: 'concluida' };
+    const erro = validarEstoqueVenda(data.estoque, vendaConcluida);
+    if (erro) return alert(erro);
+
+    if (!confirm(`Concluir venda para ${venda.cliente}? O estoque será baixado e o financeiro atualizado.`)) {
+      return;
+    }
+
+    update((prev) => {
+      const atual = prev.vendas.find((v) => v.id === id);
+      if (!atual || isVendaConcluida(atual)) return prev;
+      const concluida: Venda = { ...atual, status: 'concluida' };
+      let state = aplicarEfeitosVenda(prev, concluida, concluida.data);
+      return {
+        ...state,
+        vendas: state.vendas.map((v) => (v.id === id ? concluida : v)),
+      };
+    });
   };
 
   const adicionarIngrediente = () => {
@@ -1533,6 +1590,8 @@ export default function ChocoGest() {
     [data.estoque, data.producoes, data.precosGerados]
   );
 
+  const rankingClientes = useMemo(() => rankingMelhoresClientes(data.vendas), [data.vendas]);
+
   if (!hydrated) {
     return (
       <div className="min-h-screen bg-[#2c2118] flex items-center justify-center text-amber-200">
@@ -1622,7 +1681,14 @@ export default function ChocoGest() {
                     icon: '📈',
                     detalhe: 'estoque × preço sugerido',
                   },
-                  { label: 'Total Vendas', value: formatCurrency(sumBy(data.vendas, (v) => v.total)), icon: '🛒' },
+                  {
+                    label: 'Total Vendas',
+                    value: formatCurrency(
+                      sumBy(data.vendas.filter((v) => isVendaConcluida(v)), (v) => v.total)
+                    ),
+                    icon: '🛒',
+                    detalhe: 'vendas concluídas',
+                  },
                   { label: 'Saldo Caixa', value: formatCurrency(saldoCaixa), icon: '💰' },
                   { label: 'Saldo Banco', value: formatCurrency(saldoBanco), icon: '🏦' },
                   { label: 'Patrimônio', value: formatCurrency(valorPatrimonio), icon: '🏛️' },
@@ -1779,9 +1845,21 @@ export default function ChocoGest() {
                 <Card>
                   <h3 className="font-semibold text-amber-200 mb-3">Últimas Vendas</h3>
                   {data.vendas.slice(-5).reverse().map((v) => (
-                    <div key={v.id} className="flex justify-between py-2 border-b border-amber-800/30 text-sm">
-                      <span>{formatDate(v.data)} — {v.cliente}</span>
-                      <span className="text-amber-300">{formatCurrency(v.total)}</span>
+                    <div key={v.id} className="py-2 border-b border-amber-800/30 text-sm">
+                      <div className="flex justify-between gap-2">
+                        <span>
+                          {formatDate(v.data)} — {v.cliente}{' '}
+                          <span className="text-xs text-amber-400/70">
+                            ({STATUS_VENDA_LABEL[v.status ?? 'concluida']})
+                          </span>
+                        </span>
+                        <span className="text-amber-300 shrink-0">{formatCurrency(v.total)}</span>
+                      </div>
+                      {v.itens.length > 0 && (
+                        <p className="text-xs text-amber-400/70 mt-1">
+                          {v.itens.map((i) => `${i.nome} ${i.quantidade}${i.unidade}`).join(', ')}
+                        </p>
+                      )}
                     </div>
                   ))}
                   {data.vendas.length === 0 && <p className="text-amber-400/60 text-sm">Nenhuma venda registrada.</p>}
@@ -2180,7 +2258,23 @@ export default function ChocoGest() {
                       <option>Dinheiro</option><option>Pix</option><option>Cartao</option><option>Transferencia</option>
                     </select>
                   </Field>
+                  <Field label="Status">
+                    <select
+                      className={inputCls}
+                      value={novaVenda.status}
+                      onChange={(e) =>
+                        setNovaVenda((p) => ({ ...p, status: e.target.value as StatusVenda }))
+                      }
+                    >
+                      <option value="em_processamento">{STATUS_VENDA_LABEL.em_processamento}</option>
+                      <option value="concluida">{STATUS_VENDA_LABEL.concluida}</option>
+                    </select>
+                  </Field>
                 </div>
+                <p className="text-amber-400/70 text-xs mb-3">
+                  <strong>Em processamento:</strong> registra o pedido sem baixar estoque nem financeiro.{' '}
+                  <strong>Concluída:</strong> baixa estoque e lança recebimento ao salvar.
+                </p>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
                   <Field label="Produto">
                     <select
@@ -2277,40 +2371,146 @@ export default function ChocoGest() {
                   )}
                 </div>
               </Card>
-              <Card>
+              <Card className="mb-6">
                 <h4 className="text-amber-200 font-medium mb-4">Histórico de vendas</h4>
                 <div className="overflow-x-auto">
-                  <table className="w-full text-sm min-w-[640px]">
+                  <table className="w-full text-sm min-w-[960px]">
                     <thead>
                       <tr className="text-amber-300 border-b border-amber-700">
                         <th className="text-left py-2">Data</th>
                         <th className="text-left py-2">Cliente</th>
+                        <th className="text-left py-2">Itens</th>
+                        <th className="text-left py-2">Status</th>
                         <th className="text-left py-2">Pagamento</th>
                         <th className="text-right py-2">Total</th>
-                        <th className="text-right py-2 w-32">Ações</th>
+                        <th className="text-right py-2 min-w-[200px]">Ações</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {data.vendas.slice().reverse().map((v) => (
-                        <tr
-                          key={v.id}
-                          className={`border-b border-amber-800/30 ${vendaEditandoId === v.id ? 'bg-amber-900/30' : ''}`}
-                        >
-                          <td className="py-2">{formatDate(v.data)}</td>
-                          <td className="py-2">{v.cliente}</td>
-                          <td className="py-2">{v.formaPagamento}</td>
-                          <td className="py-2 text-right">{formatCurrency(v.total)}</td>
-                          <td className="py-2 text-right whitespace-nowrap">
-                            <Btn variant="secondary" onClick={() => editarVenda(v)}>Editar</Btn>
-                            {' '}
-                            <Btn variant="danger" onClick={() => removerVenda(v.id)}>Excluir</Btn>
-                          </td>
-                        </tr>
-                      ))}
+                      {data.vendas.slice().reverse().map((v) => {
+                        const status = v.status ?? 'concluida';
+                        return (
+                          <tr
+                            key={v.id}
+                            className={`border-b border-amber-800/30 ${vendaEditandoId === v.id ? 'bg-amber-900/30' : ''}`}
+                          >
+                            <td className="py-2">{formatDate(v.data)}</td>
+                            <td className="py-2">{v.cliente}</td>
+                            <td className="py-2 text-amber-200/90">
+                              {v.itens.length > 0 ? (
+                                <div className="space-y-1">
+                                  {v.itens.map((i) => (
+                                    <div key={i.id}>
+                                      {i.nome} — {i.quantidade} {i.unidade}
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                '—'
+                              )}
+                            </td>
+                            <td className="py-2">
+                              <span
+                                className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${
+                                  status === 'concluida'
+                                    ? 'bg-emerald-900/50 text-emerald-200'
+                                    : 'bg-amber-800/60 text-amber-200'
+                                }`}
+                              >
+                                {STATUS_VENDA_LABEL[status]}
+                              </span>
+                            </td>
+                            <td className="py-2">{v.formaPagamento}</td>
+                            <td className="py-2 text-right">{formatCurrency(v.total)}</td>
+                            <td className="py-2 text-right whitespace-nowrap">
+                              <div className="flex flex-wrap justify-end gap-1">
+                                {!isVendaConcluida(v) && (
+                                  <Btn variant="secondary" onClick={() => concluirVenda(v.id)}>
+                                    Concluir
+                                  </Btn>
+                                )}
+                                <Btn variant="secondary" onClick={() => editarVenda(v)}>Editar</Btn>
+                                <Btn variant="danger" onClick={() => removerVenda(v.id)}>Excluir</Btn>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
                 {data.vendas.length === 0 && <p className="text-amber-400/60 py-4">Nenhuma venda registrada.</p>}
+              </Card>
+
+              <Card>
+                <h4 className="text-amber-200 font-medium mb-1">Melhores clientes</h4>
+                <p className="text-amber-400/70 text-xs mb-4">
+                  Ranking por valor total de vendas concluídas (quantidade e produtos comprados).
+                </p>
+                {rankingClientes.length > 0 ? (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm min-w-[800px]">
+                      <thead>
+                        <tr className="text-amber-300 border-b border-amber-700">
+                          <th className="text-left py-2">#</th>
+                          <th className="text-left py-2">Cliente</th>
+                          <th className="text-right py-2">Vendas</th>
+                          <th className="text-right py-2">Qtd total</th>
+                          <th className="text-left py-2">Produtos comprados</th>
+                          <th className="text-right py-2">Valor total</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rankingClientes.map((c, idx) => (
+                          <tr key={c.cliente} className="border-b border-amber-800/30">
+                            <td className="py-2 text-amber-400/80">{idx + 1}</td>
+                            <td className="py-2 font-medium">{c.cliente}</td>
+                            <td className="py-2 text-right">
+                              {c.vendasConcluidas}
+                              {c.vendasEmProcessamento > 0 && (
+                                <span className="block text-xs text-amber-400/70">
+                                  +{c.vendasEmProcessamento} em processamento
+                                </span>
+                              )}
+                            </td>
+                            <td className="py-2 text-right">{c.quantidadeTotal}</td>
+                            <td className="py-2 text-amber-200/90">
+                              <div className="space-y-1">
+                                {c.produtos.map((p) => (
+                                  <div key={p.nome}>
+                                    {p.nome} — {p.quantidade} {p.unidade} ({formatCurrency(p.valorTotal)})
+                                  </div>
+                                ))}
+                              </div>
+                            </td>
+                            <td className="py-2 text-right font-semibold text-amber-100">
+                              {formatCurrency(c.valorTotal)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot>
+                        <tr className="font-bold text-amber-100 border-t border-amber-700">
+                          <td colSpan={5} className="py-3 text-right">
+                            Total vendas concluídas
+                          </td>
+                          <td className="py-3 text-right">
+                            {formatCurrency(
+                              sumBy(
+                                data.vendas.filter((v) => isVendaConcluida(v)),
+                                (v) => v.total
+                              )
+                            )}
+                          </td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                ) : (
+                  <p className="text-amber-400/60 py-2">
+                    Nenhuma venda concluída ainda para montar o ranking de clientes.
+                  </p>
+                )}
               </Card>
             </div>
           )}

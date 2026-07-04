@@ -95,6 +95,7 @@ export function vendasDoProduto(vendas: Venda[], produto: string): VendaComProdu
   const result: VendaComProduto[] = [];
 
   for (const venda of vendas) {
+    if ((venda.status ?? 'concluida') !== 'concluida') continue;
     const quantidade = venda.itens
       .filter((i) => i.nome.toLowerCase() === key)
       .reduce((acc, i) => acc + i.quantidade, 0);
