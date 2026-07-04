@@ -13,7 +13,12 @@ function baixarEstoqueFifo(estoque, itens) {
 
     const indices = updated
       .map((entry, index) => ({ entry, index }))
-      .filter(({ entry }) => entry.nome.toLowerCase() === nome && entry.quantidade > 0)
+      .filter(
+        ({ entry }) =>
+          entry.nome.toLowerCase() === nome &&
+          entry.quantidade > 0 &&
+          entry.tipo === item.tipo
+      )
       .sort((a, b) => compararLancamentosFifo(a.entry, b.entry))
       .map(({ index }) => index);
 

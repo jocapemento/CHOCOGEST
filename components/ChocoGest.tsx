@@ -25,6 +25,11 @@ import {
   valorParcelaNoMes,
 } from '@/lib/cartoes';
 import {
+  CADEIA_PRODUCAO_CACAU,
+  ingredientesSugeridosPara,
+  produtosDaCadeia,
+} from '@/lib/cadeia-producao';
+import {
   agruparEstoque,
   baixarEstoqueFifo,
   calcularPerdaProducao,
@@ -35,8 +40,11 @@ import {
   filtrarLancamentosProdutosGerados,
   filtrarSaldoMateriaPrima,
   filtrarSaldoProdutosGerados,
+  ingredientesProducaoDisponiveis,
   quantidadeDisponivel,
+  resolverTipoIngredienteProducao,
   saldoIngrediente,
+  saldoIngredienteProducao,
   totalEntradaIngredientes,
   totalizarPerdasPorProduto,
   totalVendidoProduto,
@@ -305,14 +313,16 @@ function reverterEfeitosVenda(prev: AppData, venda: Venda): AppData {
 
 function ingredientesProducaoParaItens(
   estoque: EstoqueItem[],
-  ingredientes: Producao['ingredientes']
+  ingredientes: Producao['ingredientes'],
+  producoes: Producao[]
 ): ItemMovimentacao[] {
   return ingredientes.map((ing) => {
-    const saldo = saldoIngrediente(estoque, ing.nome);
+    const tipo = resolverTipoIngredienteProducao(ing, producoes);
+    const saldo = saldoIngredienteProducao(estoque, ing.nome, producoes, tipo);
     return {
       id: 0,
       nome: ing.nome,
-      tipo: 'MateriaPrima' as TipoItem,
+      tipo,
       quantidade: ing.quantidade,
       unidade: ing.unidade ?? saldo?.unidade ?? 'kg',
       valorUnit: ing.valorUnit,
@@ -333,19 +343,27 @@ function produtoProducaoParaItem(producao: Producao): ItemMovimentacao {
   };
 }
 
-function aplicarEfeitosProducao(estoque: EstoqueItem[], producao: Producao): EstoqueItem[] {
+function aplicarEfeitosProducao(
+  estoque: EstoqueItem[],
+  producao: Producao,
+  producoes: Producao[]
+): EstoqueItem[] {
   let updated = estoque;
-  for (const item of ingredientesProducaoParaItens(updated, producao.ingredientes)) {
+  for (const item of ingredientesProducaoParaItens(updated, producao.ingredientes, producoes)) {
     updated = baixarEstoqueFifo(updated, [item]);
   }
   return atualizarEstoqueCompra(updated, [produtoProducaoParaItem(producao)], producao.data);
 }
 
-function reverterEfeitosProducao(estoque: EstoqueItem[], producao: Producao): EstoqueItem[] {
+function reverterEfeitosProducao(
+  estoque: EstoqueItem[],
+  producao: Producao,
+  producoes: Producao[]
+): EstoqueItem[] {
   const updated = baixarEstoqueFifo(estoque, [produtoProducaoParaItem(producao)]);
   return atualizarEstoqueCompra(
     updated,
-    ingredientesProducaoParaItens(updated, producao.ingredientes),
+    ingredientesProducaoParaItens(updated, producao.ingredientes, producoes),
     producao.data
   );
 }
@@ -427,7 +445,13 @@ const PRODUCAO_FORM_INICIAL = {
   produto: '',
   quantidade: 0,
   unidade: 'kg',
-  ingredientes: [] as Array<{ nome: string; quantidade: number; valorUnit: number; unidade?: string }>,
+  ingredientes: [] as Array<{
+    nome: string;
+    quantidade: number;
+    valorUnit: number;
+    unidade?: string;
+    tipo?: TipoItem;
+  }>,
 };
 
 function unidadeSugeridaProduto(producoes: Producao[], nome: string): string | undefined {
@@ -592,10 +616,17 @@ export default function ChocoGest() {
     [novaProducao.ingredientes, novaProducao.quantidade]
   );
 
-  const catalogoProdutosProducao = useMemo(
-    () => catalogoNomesProdutos(data.producoes),
-    [data.producoes]
-  );
+  const catalogoProdutosProducao = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const nome of produtosDaCadeia()) {
+      map.set(nome.toLowerCase(), nome);
+    }
+    for (const nome of catalogoNomesProdutos(data.producoes)) {
+      const key = nome.toLowerCase();
+      if (!map.has(key)) map.set(key, nome);
+    }
+    return Array.from(map.values()).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  }, [data.producoes]);
 
   const totalPerdasPorProduto = useMemo(
     () => totalizarPerdasPorProduto(data.producoes),
@@ -614,6 +645,14 @@ export default function ChocoGest() {
   const parcelasMensais = useMemo(() => calcularParcelasMensais(data.compras), [data.compras]);
   const mesesParcelas = useMemo(() => mesesComParcelas(parcelasMensais), [parcelasMensais]);
   const mesAtual = mesAtualISO();
+  const ingredientesDisponiveis = useMemo(
+    () => ingredientesProducaoDisponiveis(data.estoque, data.producoes),
+    [data.estoque, data.producoes]
+  );
+  const ingredientesSugeridos = useMemo(
+    () => ingredientesSugeridosPara(novaProducao.produto),
+    [novaProducao.produto]
+  );
 
   // --- Handlers ---
   const resetFormEstoque = () => {
@@ -982,11 +1021,11 @@ export default function ChocoGest() {
     if (!ingredienteForm.nome.trim()) {
       return alert('Selecione um ingrediente do estoque.');
     }
-    const item = saldoEstoque.find(
-      (i) => i.nome === ingredienteForm.nome && i.tipo === 'MateriaPrima'
-    );
+    const item = ingredientesDisponiveis.find((i) => i.nome === ingredienteForm.nome);
     if (!item) {
-      return alert('Ingrediente inválido. Selecione uma matéria-prima com saldo no estoque.');
+      return alert(
+        'Ingrediente inválido. Selecione uma matéria-prima ou produto intermediário com saldo no estoque.'
+      );
     }
     if (ingredienteForm.quantidade <= 0) {
       return alert('Informe uma quantidade válida.');
@@ -1000,7 +1039,7 @@ export default function ChocoGest() {
       ...p,
       ingredientes: [
         ...p.ingredientes,
-        { ...ingredienteForm, unidade: item.unidade },
+        { ...ingredienteForm, unidade: item.unidade, tipo: item.tipo },
       ],
       unidade: p.ingredientes.length === 0 ? item.unidade : p.unidade,
     }));
@@ -1032,8 +1071,9 @@ export default function ChocoGest() {
       quantidade: producao.quantidade,
       unidade: producao.unidade,
       ingredientes: producao.ingredientes.map((i) => {
-        const saldo = saldoIngrediente(data.estoque, i.nome);
-        return { ...i, unidade: i.unidade ?? saldo?.unidade };
+        const tipo = resolverTipoIngredienteProducao(i, data.producoes);
+        const saldo = saldoIngredienteProducao(data.estoque, i.nome, data.producoes, tipo);
+        return { ...i, unidade: i.unidade ?? saldo?.unidade, tipo };
       }),
     });
     setProducaoEditandoId(producao.id);
@@ -1078,7 +1118,7 @@ export default function ChocoGest() {
       if (!p) return prev;
       return {
         ...prev,
-        estoque: reverterEfeitosProducao(prev.estoque, p),
+        estoque: reverterEfeitosProducao(prev.estoque, p, prev.producoes),
         producoes: prev.producoes.filter((x) => x.id !== id),
       };
     });
@@ -1144,10 +1184,10 @@ export default function ChocoGest() {
     let estoqueBase = data.estoque;
     if (editando) {
       const antiga = data.producoes.find((p) => p.id === producaoEditandoId);
-      if (antiga) estoqueBase = reverterEfeitosProducao(estoqueBase, antiga);
+      if (antiga) estoqueBase = reverterEfeitosProducao(estoqueBase, antiga, data.producoes);
     }
 
-    const erroIngredientes = validarIngredientesProducao(estoqueBase, producao);
+    const erroIngredientes = validarIngredientesProducao(estoqueBase, producao, data.producoes);
     if (erroIngredientes) return alert(erroIngredientes);
 
     const saldoProduto = saldoIngrediente(estoqueBase, producao.produto);
@@ -1165,7 +1205,11 @@ export default function ChocoGest() {
         const antiga = prev.producoes.find((p) => p.id === producaoEditandoId);
         if (!antiga) return prev;
 
-        const estoque = aplicarEfeitosProducao(reverterEfeitosProducao(prev.estoque, antiga), producao);
+        const estoque = aplicarEfeitosProducao(
+          reverterEfeitosProducao(prev.estoque, antiga, prev.producoes),
+          producao,
+          prev.producoes
+        );
         return {
           ...prev,
           estoque,
@@ -1175,7 +1219,7 @@ export default function ChocoGest() {
 
       return {
         ...prev,
-        estoque: aplicarEfeitosProducao(prev.estoque, producao),
+        estoque: aplicarEfeitosProducao(prev.estoque, producao, prev.producoes),
         producoes: [...prev.producoes, producao],
       };
     });
@@ -2137,15 +2181,47 @@ export default function ChocoGest() {
                   </Field>
                 </div>
 
-                <h4 className="text-amber-200 mb-2">1. Matéria-prima (entrada)</h4>
+                <div className="mb-4 p-3 rounded-lg bg-amber-950/40 border border-amber-800/50 text-sm text-amber-300/90">
+                  <p className="font-medium text-amber-200 mb-1">Cadeia produtiva do cacau</p>
+                  <p className="text-xs leading-relaxed">
+                    {CADEIA_PRODUCAO_CACAU.map((e) => e.produto).join(' → ')}
+                    {' → '}outros chocolates (com ingredientes adicionais)
+                  </p>
+                </div>
+
+                <h4 className="text-amber-200 mb-2">1. Ingredientes (entrada)</h4>
+                <p className="text-amber-400/70 text-xs mb-3">
+                  Use matérias-primas compradas ou produtos intermediários já produzidos (ex.: Amêndoa Torrada para fazer Nibs).
+                </p>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
                   <Field label="Ingrediente">
                     <select className={inputCls} value={ingredienteForm.nome} onChange={(e) => {
-                      const item = saldoEstoque.find((i) => i.nome === e.target.value);
+                      const item = ingredientesDisponiveis.find((i) => i.nome === e.target.value);
                       setIngredienteForm({ nome: e.target.value, quantidade: 0, valorUnit: item?.valorUnit ?? 0 });
                     }}>
                       <option value="">Selecione...</option>
-                      {saldoEstoque.filter((e) => e.tipo === 'MateriaPrima').map((e) => <option key={e.nome} value={e.nome}>{e.nome} ({e.quantidade} {e.unidade})</option>)}
+                      {ingredientesDisponiveis.some((e) => e.origem === 'compra') && (
+                        <optgroup label="Matérias-primas (compras)">
+                          {ingredientesDisponiveis
+                            .filter((e) => e.origem === 'compra')
+                            .map((e) => (
+                              <option key={`mp-${e.nome}`} value={e.nome}>
+                                {e.nome} ({e.quantidade} {e.unidade})
+                              </option>
+                            ))}
+                        </optgroup>
+                      )}
+                      {ingredientesDisponiveis.some((e) => e.origem === 'producao') && (
+                        <optgroup label="Produtos intermediários (produção)">
+                          {ingredientesDisponiveis
+                            .filter((e) => e.origem === 'producao')
+                            .map((e) => (
+                              <option key={`pi-${e.nome}`} value={e.nome}>
+                                {e.nome} ({e.quantidade} {e.unidade})
+                              </option>
+                            ))}
+                        </optgroup>
+                      )}
                     </select>
                   </Field>
                   <Field label="Quantidade">
@@ -2160,7 +2236,11 @@ export default function ChocoGest() {
                   <div className="mt-3 text-sm space-y-1 mb-6">
                     {novaProducao.ingredientes.map((ing, idx) => (
                       <div key={idx} className="flex justify-between items-center text-amber-200 gap-2">
-                        <span>{ing.nome}: {ing.quantidade} {ing.unidade ?? 'kg'} — {formatCurrency(ing.quantidade * ing.valorUnit)}</span>
+                        <span>
+                          {ing.nome}
+                          {ing.tipo === 'ProdutoAcabado' ? ' (intermediário)' : ''}: {ing.quantidade}{' '}
+                          {ing.unidade ?? 'kg'} — {formatCurrency(ing.quantidade * ing.valorUnit)}
+                        </span>
                         <Btn variant="danger" className="px-2 py-1" onClick={() => removerIngredienteLista(idx)}>✕</Btn>
                       </div>
                     ))}
@@ -2168,6 +2248,12 @@ export default function ChocoGest() {
                 )}
 
                 <h4 className="text-amber-200 mb-2">2. Produto gerado (saída)</h4>
+                {ingredientesSugeridos.length > 0 && (
+                  <p className="text-amber-400/80 text-xs mb-3">
+                    Ingredientes sugeridos para <strong>{novaProducao.produto || 'este produto'}</strong>:{' '}
+                    {ingredientesSugeridos.join(', ')}. Outros ingredientes também podem ser adicionados.
+                  </p>
+                )}
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
                   <Field label="Produto">
                     <input

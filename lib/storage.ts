@@ -1,4 +1,4 @@
-import { calcularPerdaProducao } from './estoque';
+import { calcularPerdaProducao, resolverTipoIngredienteProducao } from './estoque';
 import { AppData, EMPTY_DATA, STORAGE_KEYS } from './types';
 import type {
   BancoModel,
@@ -135,6 +135,7 @@ function normalizeProducoes(items: unknown[]): Producao[] {
             quantidade: asNumber(ing.quantidade),
             valorUnit: asNumber(ing.valorUnit),
             unidade: ing.unidade,
+            tipo: ing.tipo,
           }))
         : [],
       custoEstimado: asNumber(item.custoEstimado),
@@ -147,15 +148,23 @@ function normalizeProducoes(items: unknown[]): Producao[] {
           ? asNumber(item.percentualPerda)
           : undefined,
     };
-  }).map((p) => {
-    const calculada = calcularPerdaProducao(p);
-    if (!calculada) return p;
-    return {
+  })
+    .map((p) => {
+      const calculada = calcularPerdaProducao(p);
+      if (!calculada) return p;
+      return {
+        ...p,
+        quantidadePerdida: calculada.perdaQuantidade,
+        percentualPerda: calculada.perdaPercentual,
+      };
+    })
+    .map((p, _idx, arr) => ({
       ...p,
-      quantidadePerdida: calculada.perdaQuantidade,
-      percentualPerda: calculada.perdaPercentual,
-    };
-  });
+      ingredientes: p.ingredientes.map((ing) => ({
+        ...ing,
+        tipo: ing.tipo ?? resolverTipoIngredienteProducao(ing, arr),
+      })),
+    }));
 }
 
 function normalizePrecosGerados(items: unknown[]): PrecoGerado[] {

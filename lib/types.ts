@@ -54,7 +54,14 @@ export interface Producao {
   produto: string;
   quantidade: number;
   unidade: string;
-  ingredientes: Array<{ nome: string; quantidade: number; valorUnit: number; unidade?: string }>;
+  ingredientes: Array<{
+    nome: string;
+    quantidade: number;
+    valorUnit: number;
+    unidade?: string;
+    /** MateriaPrima (compra) ou ProdutoAcabado (etapa anterior da produção). */
+    tipo?: TipoItem;
+  }>;
   custoEstimado: number;
   /** Perda calculada: entrada − saída (mesma unidade). */
   quantidadePerdida?: number;

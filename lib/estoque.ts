@@ -69,7 +69,12 @@ export function baixarEstoqueFifo(
 
     const indices = updated
       .map((entry, index) => ({ entry, index }))
-      .filter(({ entry }) => entry.nome.toLowerCase() === nome && entry.quantidade > 0)
+      .filter(
+        ({ entry }) =>
+          entry.nome.toLowerCase() === nome &&
+          entry.quantidade > 0 &&
+          entry.tipo === item.tipo
+      )
       .sort((a, b) => compararLancamentosFifo(a.entry, b.entry))
       .map(({ index }) => index);
 
@@ -111,27 +116,111 @@ export function totalVendidoProduto(vendas: Venda[], produto: string): number {
 }
 
 export function materiasPrimasDisponiveis(estoque: EstoqueItem[]): string[] {
-  return agruparEstoque(estoque)
+  return agruparEstoquePorNomeTipo(estoque)
     .filter((s) => s.tipo === 'MateriaPrima' && s.quantidade > 0)
     .map((s) => s.nome)
     .sort((a, b) => a.localeCompare(b, 'pt-BR'));
+}
+
+export function agruparEstoquePorNomeTipo(estoque: EstoqueItem[]): SaldoEstoque[] {
+  const map = new Map<string, SaldoEstoque>();
+
+  for (const item of estoque) {
+    if (item.quantidade <= 0) continue;
+    const key = `${item.nome.toLowerCase()}|${item.tipo}`;
+    const existing = map.get(key);
+
+    if (existing) {
+      const qtd = existing.quantidade + item.quantidade;
+      const valorMedio =
+        qtd > 0
+          ? (existing.quantidade * existing.valorUnit + item.quantidade * item.valorUnit) / qtd
+          : item.valorUnit;
+      map.set(key, { ...existing, quantidade: qtd, valorUnit: valorMedio });
+    } else {
+      map.set(key, {
+        nome: item.nome,
+        tipo: item.tipo,
+        unidade: item.unidade,
+        quantidade: item.quantidade,
+        valorUnit: item.valorUnit,
+      });
+    }
+  }
+
+  return Array.from(map.values()).sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
 }
 
 export function saldoIngrediente(estoque: EstoqueItem[], nome: string): SaldoEstoque | undefined {
   return agruparEstoque(estoque).find((s) => s.nome.toLowerCase() === nome.toLowerCase());
 }
 
-export function validarIngredientesProducao(estoque: EstoqueItem[], producao: Producao): string | null {
-  const disponiveis = materiasPrimasDisponiveis(estoque);
+export function resolverTipoIngredienteProducao(
+  ingrediente: Producao['ingredientes'][number],
+  producoes: Producao[]
+): TipoItem {
+  if (ingrediente.tipo) return ingrediente.tipo;
+  if (isProdutoGerado(ingrediente.nome, producoes)) return 'ProdutoAcabado';
+  return 'MateriaPrima';
+}
+
+export function saldoIngredienteProducao(
+  estoque: EstoqueItem[],
+  nome: string,
+  producoes: Producao[],
+  tipo?: TipoItem
+): SaldoEstoque | undefined {
+  const tipoResolvido =
+    tipo ??
+    (isProdutoGerado(nome, producoes) ? ('ProdutoAcabado' as TipoItem) : ('MateriaPrima' as TipoItem));
+
+  return agruparEstoquePorNomeTipo(estoque).find(
+    (s) => s.nome.toLowerCase() === nome.toLowerCase() && s.tipo === tipoResolvido
+  );
+}
+
+export interface IngredienteProducaoDisponivel extends SaldoEstoque {
+  origem: 'compra' | 'producao';
+}
+
+export function ingredientesProducaoDisponiveis(
+  estoque: EstoqueItem[],
+  producoes: Producao[]
+): IngredienteProducaoDisponivel[] {
+  const nomesProduzidos = nomesProdutosGerados(producoes);
+
+  return agruparEstoquePorNomeTipo(estoque)
+    .filter((s) => {
+      if (s.quantidade <= 0) return false;
+      if (s.tipo === 'MateriaPrima') return true;
+      return s.tipo === 'ProdutoAcabado' && nomesProduzidos.has(s.nome.toLowerCase());
+    })
+    .map((s) => ({
+      ...s,
+      origem: s.tipo === 'ProdutoAcabado' ? ('producao' as const) : ('compra' as const),
+    }))
+    .sort((a, b) => {
+      if (a.origem !== b.origem) return a.origem === 'compra' ? -1 : 1;
+      return a.nome.localeCompare(b.nome, 'pt-BR');
+    });
+}
+
+export function validarIngredientesProducao(
+  estoque: EstoqueItem[],
+  producao: Producao,
+  producoes: Producao[]
+): string | null {
+  const disponiveis = ingredientesProducaoDisponiveis(estoque, producoes);
 
   for (const ing of producao.ingredientes) {
-    const saldo = saldoIngrediente(estoque, ing.nome);
+    const tipo = resolverTipoIngredienteProducao(ing, producoes);
+    const saldo = saldoIngredienteProducao(estoque, ing.nome, producoes, tipo);
 
-    if (!saldo || saldo.tipo !== 'MateriaPrima' || saldo.quantidade <= 0) {
+    if (!saldo || saldo.quantidade <= 0) {
       const lista =
         disponiveis.length > 0
-          ? `\n\nMatérias-primas no estoque:\n${disponiveis.map((n) => `  — ${n}`).join('\n')}`
-          : '\n\nNenhuma matéria-prima com saldo no estoque.';
+          ? `\n\nIngredientes disponíveis:\n${disponiveis.map((d) => `  — ${d.nome}${d.origem === 'producao' ? ' (produzido)' : ''}`).join('\n')}`
+          : '\n\nNenhum ingrediente com saldo no estoque.';
       return `Ingrediente "${ing.nome}" não existe no estoque.${lista}`;
     }
 
