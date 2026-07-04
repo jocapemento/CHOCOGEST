@@ -1624,8 +1624,8 @@ export default function ChocoGest() {
         </div>
       </header>
 
-      <div className="flex max-w-7xl mx-auto">
-        <aside className="w-72 shrink-0 bg-[#3a2c22]/95 min-h-[calc(100vh-80px)] p-4 border-r border-amber-800 hidden lg:block">
+      <div className="flex max-w-7xl mx-auto items-start">
+        <aside className="w-72 shrink-0 self-start sticky top-20 z-[5] max-h-[calc(100vh-5rem)] overflow-y-auto overscroll-contain bg-[#3a2c22]/95 p-4 border-r border-amber-800 hidden lg:block">
           <nav className="space-y-1">
             {TABS.map((tab) => (
               <button
