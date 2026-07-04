@@ -7,6 +7,7 @@ import {
   filtrarSaldoMateriaPrima,
   filtrarSaldoProdutosGerados,
 } from './estoque';
+import { totalizarProdutosPrecificados } from './precificacao';
 import type { AppData } from './types';
 import { formatCurrency, formatDate, sumBy } from './format';
 
@@ -237,6 +238,12 @@ export function gerarPdfDashboard(data: AppData) {
     sumBy(data.movimentosBanco.filter((m) => m.tipo === 'saida'), (m) => m.valor);
   const valorPatrimonio = sumBy(data.patrimonio, (p) => p.valorAtual);
 
+  const resumoPreco = totalizarProdutosPrecificados(
+    data.estoque,
+    data.producoes,
+    data.precosGerados
+  );
+
   autoTable(doc, {
     startY: 52,
     head: [['Indicador', 'Valor']],
@@ -244,7 +251,9 @@ export function gerarPdfDashboard(data: AppData) {
       ['Itens matéria-prima', saldoMateriaPrima.length.toString()],
       ['Valor matéria-prima', formatCurrency(valorMateriaPrima)],
       ['Itens produtos gerados', saldoProdutosGerados.length.toString()],
-      ['Valor produtos gerados', formatCurrency(valorProdutosGerados)],
+      ['Valor produtos gerados (custo)', formatCurrency(valorProdutosGerados)],
+      ['Valor potencial de venda', formatCurrency(resumoPreco.totais.valorVendaTotal)],
+      ['Lucro potencial', formatCurrency(resumoPreco.totais.lucroPotencialTotal)],
       ['Valor total operacional', formatCurrency(valorEstoque)],
       ['Total de compras', formatCurrency(totalCompras)],
       ['Total de vendas', formatCurrency(totalVendas)],
@@ -256,6 +265,58 @@ export function gerarPdfDashboard(data: AppData) {
     theme: 'grid',
     headStyles: { fillColor: [180, 83, 9] },
   });
+
+  if (resumoPreco.itens.length > 0) {
+    const precificacaoRows = resumoPreco.itens.map((item) => [
+      item.produto,
+      item.quantidade > 0 ? `${item.quantidade} ${item.unidade}` : '—',
+      item.custoUnitario > 0 ? formatCurrency(item.custoUnitario) : '—',
+      item.margemLucro !== null ? `${item.margemLucro}%` : '—',
+      item.precoSugerido !== null ? formatCurrency(item.precoSugerido) : '—',
+      item.valorCustoTotal > 0 ? formatCurrency(item.valorCustoTotal) : '—',
+      item.valorVendaTotal !== null ? formatCurrency(item.valorVendaTotal) : '—',
+      item.lucroPotencial !== null ? formatCurrency(item.lucroPotencial) : '—',
+    ]);
+
+    const lastTable = (doc as jsPDF & { lastAutoTable?: { finalY: number } }).lastAutoTable;
+    const startY = (lastTable?.finalY ?? 52) + 10;
+
+    doc.setFontSize(11);
+    doc.setTextColor(120, 53, 15);
+    doc.text('Produtos produzidos — estoque e precificação', 14, startY);
+
+    autoTable(doc, {
+      startY: startY + 4,
+      head: [
+        [
+          'Produto',
+          'Qtd',
+          'Custo un.',
+          'Margem',
+          'Preço sug.',
+          'Total custo',
+          'Total venda',
+          'Lucro pot.',
+        ],
+      ],
+      body: precificacaoRows,
+      foot: [
+        [
+          'Totalização',
+          `${resumoPreco.totais.quantidadeProdutos} prod.`,
+          '',
+          '',
+          '',
+          formatCurrency(resumoPreco.totais.valorCustoTotal),
+          formatCurrency(resumoPreco.totais.valorVendaTotal),
+          formatCurrency(resumoPreco.totais.lucroPotencialTotal),
+        ],
+      ],
+      theme: 'grid',
+      headStyles: { fillColor: [180, 83, 9] },
+      footStyles: { fillColor: [254, 243, 199], textColor: [60, 40, 30], fontStyle: 'bold' },
+    });
+  }
 
   savePdf(doc, `dashboard-${new Date().toISOString().slice(0, 10)}.pdf`);
 }

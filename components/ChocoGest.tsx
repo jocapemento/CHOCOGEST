@@ -51,6 +51,7 @@ import {
   validarIngredientesProducao,
   vendasDoProduto,
 } from '@/lib/estoque';
+import { totalizarProdutosPrecificados } from '@/lib/precificacao';
 import {
   brlParaUsd,
   formatCurrency,
@@ -1516,6 +1517,11 @@ export default function ChocoGest() {
 
   const ultimoPrecoProduto = precosExibidos[0];
 
+  const resumoPrecificacaoDashboard = useMemo(
+    () => totalizarProdutosPrecificados(data.estoque, data.producoes, data.precosGerados),
+    [data.estoque, data.producoes, data.precosGerados]
+  );
+
   if (!hydrated) {
     return (
       <div className="min-h-screen bg-[#2c2118] flex items-center justify-center text-amber-200">
@@ -1593,6 +1599,18 @@ export default function ChocoGest() {
                 {[
                   { label: 'Matéria-Prima', value: formatCurrency(valorMateriaPrima), icon: '🌰', detalhe: `${saldoMateriaPrima.length} itens` },
                   { label: 'Produtos Gerados', value: formatCurrency(valorProdutosGerados), icon: '🍫', detalhe: `${saldoProdutosGerados.length} itens` },
+                  {
+                    label: 'Valor Potencial Venda',
+                    value: formatCurrency(resumoPrecificacaoDashboard.totais.valorVendaTotal),
+                    icon: '🏷️',
+                    detalhe: `${resumoPrecificacaoDashboard.totais.comPrecoRegistrado} com preço`,
+                  },
+                  {
+                    label: 'Lucro Potencial',
+                    value: formatCurrency(resumoPrecificacaoDashboard.totais.lucroPotencialTotal),
+                    icon: '📈',
+                    detalhe: 'estoque × preço sugerido',
+                  },
                   { label: 'Total Vendas', value: formatCurrency(sumBy(data.vendas, (v) => v.total)), icon: '🛒' },
                   { label: 'Saldo Caixa', value: formatCurrency(saldoCaixa), icon: '💰' },
                   { label: 'Saldo Banco', value: formatCurrency(saldoBanco), icon: '🏦' },
@@ -1654,6 +1672,98 @@ export default function ChocoGest() {
                   )}
                 </Card>
               </div>
+
+              <Card className="mb-8">
+                <h3 className="font-semibold text-amber-200 mb-1">
+                  Produtos produzidos — estoque e precificação
+                </h3>
+                <p className="text-amber-400/70 text-xs mb-4">
+                  Preços da aba Precificação. Produtos sem preço registrado aparecem apenas com custo.
+                </p>
+                {resumoPrecificacaoDashboard.itens.length > 0 ? (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm min-w-[900px]">
+                      <thead>
+                        <tr className="text-amber-300 border-b border-amber-700">
+                          <th className="text-left py-2">Produto</th>
+                          <th className="text-right py-2">Qtd</th>
+                          <th className="text-right py-2">Custo un.</th>
+                          <th className="text-right py-2">Margem</th>
+                          <th className="text-right py-2">Preço sug.</th>
+                          <th className="text-right py-2">Total custo</th>
+                          <th className="text-right py-2">Total venda</th>
+                          <th className="text-right py-2">Lucro pot.</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {resumoPrecificacaoDashboard.itens.map((item) => (
+                          <tr key={item.produto} className="border-b border-amber-800/30">
+                            <td className="py-2">
+                              {item.produto}
+                              {item.dataPreco && (
+                                <span className="block text-xs text-amber-400/60">
+                                  Preço em {formatDate(item.dataPreco)}
+                                </span>
+                              )}
+                            </td>
+                            <td className="py-2 text-right">
+                              {item.quantidade > 0 ? `${item.quantidade} ${item.unidade}` : '—'}
+                            </td>
+                            <td className="py-2 text-right">
+                              {item.custoUnitario > 0 ? formatCurrency(item.custoUnitario) : '—'}
+                            </td>
+                            <td className="py-2 text-right">
+                              {item.margemLucro !== null ? `${item.margemLucro}%` : '—'}
+                            </td>
+                            <td className="py-2 text-right font-medium text-amber-100">
+                              {item.precoSugerido !== null ? formatCurrency(item.precoSugerido) : '—'}
+                            </td>
+                            <td className="py-2 text-right">
+                              {item.valorCustoTotal > 0 ? formatCurrency(item.valorCustoTotal) : '—'}
+                            </td>
+                            <td className="py-2 text-right">
+                              {item.valorVendaTotal !== null ? formatCurrency(item.valorVendaTotal) : '—'}
+                            </td>
+                            <td className="py-2 text-right text-emerald-300/90">
+                              {item.lucroPotencial !== null ? formatCurrency(item.lucroPotencial) : '—'}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot>
+                        <tr className="font-bold text-amber-100 border-t border-amber-700">
+                          <td className="py-3">Totalização</td>
+                          <td className="py-3 text-right text-xs font-normal text-amber-400/80">
+                            {resumoPrecificacaoDashboard.totais.quantidadeProdutos} prod.
+                          </td>
+                          <td colSpan={3} className="py-3" />
+                          <td className="py-3 text-right">
+                            {formatCurrency(resumoPrecificacaoDashboard.totais.valorCustoTotal)}
+                          </td>
+                          <td className="py-3 text-right">
+                            {formatCurrency(resumoPrecificacaoDashboard.totais.valorVendaTotal)}
+                          </td>
+                          <td className="py-3 text-right text-emerald-300">
+                            {formatCurrency(resumoPrecificacaoDashboard.totais.lucroPotencialTotal)}
+                          </td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                ) : (
+                  <p className="text-amber-400/60 text-sm py-2">
+                    Nenhum produto produzido com estoque ou preço registrado. Registre produções e
+                    precifique na aba Precificação.
+                  </p>
+                )}
+                {resumoPrecificacaoDashboard.totais.semPrecoRegistrado > 0 && (
+                  <p className="text-amber-400/70 text-xs mt-3">
+                    {resumoPrecificacaoDashboard.totais.semPrecoRegistrado} produto(s) em estoque sem
+                    preço registrado — total de venda parcial até precificar todos.
+                  </p>
+                )}
+              </Card>
+
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <Card>
                   <h3 className="font-semibold text-amber-200 mb-3">Últimas Vendas</h3>
