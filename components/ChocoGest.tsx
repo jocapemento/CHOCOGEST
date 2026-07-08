@@ -497,7 +497,7 @@ function SectionTitle({ children, action }: { children: React.ReactNode; action?
 
 function Card({ children, className = '' }: { children: React.ReactNode; className?: string }) {
   return (
-    <div className={`bg-[#4a3828] rounded-2xl p-6 border border-amber-800/50 ${className}`}>
+    <div className={`bg-[#4a3828]/80 backdrop-blur rounded-2xl p-6 border border-amber-800/50 ${className}`}>
       {children}
     </div>
   );
@@ -551,7 +551,7 @@ const inputCls =
 
 const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? '';
 const chocolateBgStyle: React.CSSProperties = {
-  backgroundImage: `linear-gradient(rgba(44, 33, 24, 0.92), rgba(44, 33, 24, 0.95)), url('${basePath}/chocolate-bg.jpeg')`,
+  backgroundImage: `linear-gradient(rgba(44, 33, 24, 0.55), rgba(44, 33, 24, 0.65)), url('${basePath}/chocolate-bg.jpeg')`,
 };
 
 export default function ChocoGest() {
@@ -1602,10 +1602,14 @@ export default function ChocoGest() {
 
   return (
     <div className="min-h-screen bg-chocolate text-white" style={chocolateBgStyle}>
-      <header className="bg-amber-950/90 backdrop-blur py-5 border-b border-amber-700 sticky top-0 z-10">
+      <header className="bg-amber-950/60 backdrop-blur py-5 border-b border-amber-700 sticky top-0 z-10">
         <div className="max-w-7xl mx-auto px-6 flex items-center justify-between gap-4 flex-wrap">
           <div className="flex items-center gap-4">
-            <div className="text-5xl">🍫</div>
+            <img
+              src={`${basePath}/Logo.jpeg`}
+              alt="Logo ChocoGest"
+              className="h-14 w-auto object-contain rounded-lg"
+            />
             <div>
               <h1 className="text-3xl font-bold">ChocoGest</h1>
               <p className="text-amber-300 text-sm">Fábrica de Chocolate Bean-to-Bar • Bahia</p>
@@ -1625,7 +1629,7 @@ export default function ChocoGest() {
       </header>
 
       <div className="flex max-w-7xl mx-auto items-start">
-        <aside className="w-72 shrink-0 self-start sticky top-20 z-[5] max-h-[calc(100vh-5rem)] overflow-y-auto overscroll-contain bg-[#3a2c22]/95 p-4 border-r border-amber-800 hidden lg:block">
+        <aside className="w-72 shrink-0 self-start sticky top-20 z-[5] max-h-[calc(100vh-5rem)] overflow-y-auto overscroll-contain bg-[#3a2c22]/70 backdrop-blur p-4 border-r border-amber-800 hidden lg:block">
           <nav className="space-y-1">
             {TABS.map((tab) => (
               <button
@@ -1644,7 +1648,7 @@ export default function ChocoGest() {
         </aside>
 
         {/* Mobile tabs */}
-        <div className="lg:hidden w-full px-4 py-2 overflow-x-auto flex gap-2 border-b border-amber-800 bg-[#3a2c22]">
+        <div className="lg:hidden w-full px-4 py-2 overflow-x-auto flex gap-2 border-b border-amber-800 bg-[#3a2c22]/70 backdrop-blur">
           {TABS.map((tab) => (
             <button
               key={tab.id}
