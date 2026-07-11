@@ -52,12 +52,24 @@ import {
   validarIngredientesProducao,
   vendasDoProduto,
 } from '@/lib/estoque';
-import { precoUnitarioParaVenda, totalizarProdutosPrecificados } from '@/lib/precificacao';
+import {
+  catalogoProdutosPrecificacao,
+  historicoPrecosDoProduto,
+  historicoPrecosOrdenado,
+  nomeProdutoIgual,
+  precoUnitarioParaVenda,
+  totalizarProdutosPrecificados,
+} from '@/lib/precificacao';
 import {
   isVendaConcluida,
+  listarVendasPendentes,
+  produtosReservadosPendentes,
   rankingMelhoresClientes,
+  resumoVendasPendentes,
+  saldoLivreParaVenda,
   STATUS_VENDA_LABEL,
   validarEstoqueVenda,
+  validarReservaVendaPendente,
 } from '@/lib/vendas';
 import {
   brlParaUsd,
@@ -913,8 +925,21 @@ export default function ChocoGest() {
     );
     if (!saldo) return alert('Selecione um produto produzido com saldo disponível.');
     if (itemVenda.quantidade <= 0) return alert('Informe uma quantidade válida.');
-    if (itemVenda.quantidade > saldo.quantidade) {
-      return alert(`Quantidade indisponível. Saldo atual: ${saldo.quantidade} ${saldo.unidade}.`);
+
+    // Já no formulário + reservas de outras vendas pendentes
+    const qtdJaNoForm = novaVenda.itens
+      .filter((i) => i.nome.toLowerCase() === saldo.nome.toLowerCase())
+      .reduce((acc, i) => acc + i.quantidade, 0);
+    const livre = saldoLivreParaVenda(data.estoque, data.vendas, saldo.nome, vendaEditandoId);
+    const disponivel = Math.max(0, livre - qtdJaNoForm);
+
+    if (itemVenda.quantidade > disponivel) {
+      return alert(
+        `Quantidade indisponível para "${saldo.nome}". ` +
+          `Saldo livre: ${disponivel} ${saldo.unidade} ` +
+          `(estoque ${saldo.quantidade}${qtdJaNoForm > 0 ? `, já no pedido ${qtdJaNoForm}` : ''}). ` +
+          `Considere as reservas de vendas pendentes.`
+      );
     }
     const valorUnit = resolverValorUnitarioVenda(saldo.nome, itemVenda.valorUnit, saldo.valorUnit);
     if (valorUnit <= 0) {
@@ -1027,6 +1052,14 @@ export default function ChocoGest() {
     if (isVendaConcluida(venda)) {
       const erro = validarEstoqueVenda(estoqueBase, venda);
       if (erro) return alert(erro);
+    } else {
+      const erroReserva = validarReservaVendaPendente(
+        estoqueBase,
+        data.vendas,
+        venda,
+        editando ? vendaEditandoId : null
+      );
+      if (erroReserva) return alert(erroReserva);
     }
 
     update((prev) => {
@@ -1058,7 +1091,7 @@ export default function ChocoGest() {
         ? 'Venda atualizada com sucesso!'
         : isVendaConcluida(venda)
           ? 'Venda concluída e registrada!'
-          : 'Pedido registrado em processamento.'
+          : 'Venda pendente registrada (estoque reservado, sem baixa financeira).'
     );
   };
 
@@ -1507,32 +1540,38 @@ export default function ChocoGest() {
   };
 
   const registrarPreco = () => {
-    if (!produtoPreco.trim()) {
+    const nome = produtoPreco.trim();
+    if (!nome) {
       return alert('Selecione um produto acabado.');
     }
-    if (!produtoSelecionado) {
-      return alert('Produto não encontrado no estoque.');
+    const produtoInfo = produtosParaPrecificacao.find((p) => nomeProdutoIgual(p.nome, nome));
+    if (!produtoInfo) {
+      return alert('Produto não encontrado. Produza o item ou registre-o no estoque.');
     }
     if (margemLucro < 0) {
       return alert('Informe uma margem de lucro válida.');
     }
 
-    const registro: PrecoGerado = {
-      id: nextId(data.precosGerados),
-      data: normalizeDateISO(dataPreco),
-      produto: produtoPreco,
-      unidade: produtoSelecionado.unidade,
-      custoUnitario: custoProduto,
-      margemLucro,
-      precoSugerido,
-    };
+    const custo = produtoInfo.custoUnitario;
+    const preco = custo * (1 + margemLucro / 100);
 
-    update((prev) => ({
-      ...prev,
-      precosGerados: [...prev.precosGerados, registro],
-    }));
+    update((prev) => {
+      const registro: PrecoGerado = {
+        id: nextId(prev.precosGerados),
+        data: normalizeDateISO(dataPreco),
+        produto: produtoInfo.nome,
+        unidade: produtoInfo.unidade,
+        custoUnitario: custo,
+        margemLucro,
+        precoSugerido: preco,
+      };
+      return {
+        ...prev,
+        precosGerados: [...prev.precosGerados, registro],
+      };
+    });
 
-    alert(`Preço de ${produtoPreco} registrado: ${formatCurrency(precoSugerido)}`);
+    alert(`Preço de ${produtoInfo.nome} registrado: ${formatCurrency(preco)}`);
   };
 
   const removerPreco = (id: number) => {
@@ -1571,19 +1610,23 @@ export default function ChocoGest() {
   const saldoCaixa = calcSaldo(data.movimentosCaixa);
   const saldoBanco = calcSaldo(data.movimentosBanco);
   const valorPatrimonio = sumBy(data.patrimonio, (p) => p.valorAtual);
-  const produtosAcabados = saldoEstoque.filter((e) => e.tipo === 'ProdutoAcabado');
-  const produtoSelecionado = produtosAcabados.find((p) => p.nome === produtoPreco);
-  const custoProduto = produtoSelecionado ? produtoSelecionado.valorUnit : 0;
+  const produtosParaPrecificacao = catalogoProdutosPrecificacao(
+    data.estoque,
+    data.producoes,
+    data.precosGerados
+  );
+  const produtoSelecionado = produtosParaPrecificacao.find((p) =>
+    nomeProdutoIgual(p.nome, produtoPreco)
+  );
+  const custoProduto = produtoSelecionado ? produtoSelecionado.custoUnitario : 0;
   const precoSugerido = custoProduto * (1 + margemLucro / 100);
 
-  const precosExibidos = useMemo(() => {
-    const lista = produtoPreco
-      ? data.precosGerados.filter((p) => p.produto.toLowerCase() === produtoPreco.toLowerCase())
-      : data.precosGerados;
-    return [...lista].sort((a, b) => b.data.localeCompare(a.data) || b.id - a.id);
-  }, [data.precosGerados, produtoPreco]);
-
-  const ultimoPrecoProduto = precosExibidos[0];
+  /** Histórico completo — nunca esconde precificações anteriores ao filtrar o formulário. */
+  const precosExibidos = historicoPrecosOrdenado(data.precosGerados);
+  const precosDoProdutoSelecionado = produtoPreco
+    ? historicoPrecosDoProduto(data.precosGerados, produtoPreco)
+    : [];
+  const ultimoPrecoProduto = precosDoProdutoSelecionado[0];
 
   const resumoPrecificacaoDashboard = useMemo(
     () => totalizarProdutosPrecificados(data.estoque, data.producoes, data.precosGerados),
@@ -1591,6 +1634,17 @@ export default function ChocoGest() {
   );
 
   const rankingClientes = useMemo(() => rankingMelhoresClientes(data.vendas), [data.vendas]);
+  const vendasPendentes = useMemo(() => listarVendasPendentes(data.vendas), [data.vendas]);
+  const resumoPendentes = useMemo(() => resumoVendasPendentes(data.vendas), [data.vendas]);
+  const reservasPendentes = useMemo(() => produtosReservadosPendentes(data.vendas), [data.vendas]);
+  const vendasConcluidas = useMemo(
+    () =>
+      data.vendas
+        .filter(isVendaConcluida)
+        .slice()
+        .sort((a, b) => b.data.localeCompare(a.data) || b.id - a.id),
+    [data.vendas]
+  );
 
   if (!hydrated) {
     return (
@@ -1692,6 +1746,15 @@ export default function ChocoGest() {
                     ),
                     icon: '🛒',
                     detalhe: 'vendas concluídas',
+                  },
+                  {
+                    label: 'Vendas Pendentes',
+                    value: formatCurrency(resumoPendentes.valorTotal),
+                    icon: '⏳',
+                    detalhe:
+                      resumoPendentes.quantidade > 0
+                        ? `${resumoPendentes.quantidade} pedido(s) · ${resumoPendentes.itensReservados} un. reservadas`
+                        : 'nenhum pedido pendente',
                   },
                   { label: 'Saldo Caixa', value: formatCurrency(saldoCaixa), icon: '💰' },
                   { label: 'Saldo Banco', value: formatCurrency(saldoBanco), icon: '🏦' },
@@ -2276,7 +2339,8 @@ export default function ChocoGest() {
                   </Field>
                 </div>
                 <p className="text-amber-400/70 text-xs mb-3">
-                  <strong>Em processamento:</strong> registra o pedido sem baixar estoque nem financeiro.{' '}
+                  <strong>Pendente:</strong> entra na relação de vendas pendentes, reserva o produto no
+                  saldo livre e não baixa estoque nem financeiro.{' '}
                   <strong>Concluída:</strong> baixa estoque e lança recebimento ao salvar.
                 </p>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
@@ -2304,13 +2368,19 @@ export default function ChocoGest() {
                       <option value="">Selecione produto...</option>
                       {produtosParaVenda.map((e) => {
                         const preco = precoUnitarioParaVenda(data.precosGerados, e.nome, e.valorUnit);
+                        const livre = saldoLivreParaVenda(
+                          data.estoque,
+                          data.vendas,
+                          e.nome,
+                          vendaEditandoId
+                        );
                         const precoLabel =
                           preco.origem === 'precificacao'
                             ? formatCurrency(preco.valor)
                             : `${formatCurrency(e.valorUnit)} (custo)`;
                         return (
                           <option key={e.nome} value={e.nome}>
-                            {e.nome} ({e.quantidade} {e.unidade}) — {precoLabel}
+                            {e.nome} — livre {livre}/{e.quantidade} {e.unidade} — {precoLabel}
                           </option>
                         );
                       })}
@@ -2375,31 +2445,106 @@ export default function ChocoGest() {
                   )}
                 </div>
               </Card>
-              <Card className="mb-6">
-                <h4 className="text-amber-200 font-medium mb-4">Histórico de vendas</h4>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm min-w-[960px]">
-                    <thead>
-                      <tr className="text-amber-300 border-b border-amber-700">
-                        <th className="text-left py-2">Data</th>
-                        <th className="text-left py-2">Cliente</th>
-                        <th className="text-left py-2">Itens</th>
-                        <th className="text-left py-2">Status</th>
-                        <th className="text-left py-2">Pagamento</th>
-                        <th className="text-right py-2">Total</th>
-                        <th className="text-right py-2 min-w-[200px]">Ações</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {data.vendas.slice().reverse().map((v) => {
-                        const status = v.status ?? 'concluida';
-                        return (
+              {/* Relação de vendas pendentes */}
+              <Card className="mb-6 border border-amber-600/40">
+                <h4 className="text-amber-200 font-medium mb-1">Relação de vendas pendentes</h4>
+                <p className="text-amber-400/70 text-xs mb-4">
+                  Pedidos com status <strong>Pendente</strong>: reservam saldo livre do produto e só
+                  baixam estoque/financeiro ao concluir.
+                </p>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
+                  <div className="bg-[#2c2118] rounded-xl p-3">
+                    <div className="text-amber-400/70 text-xs">Pedidos</div>
+                    <div className="text-xl font-bold text-amber-100">{resumoPendentes.quantidade}</div>
+                  </div>
+                  <div className="bg-[#2c2118] rounded-xl p-3">
+                    <div className="text-amber-400/70 text-xs">Valor pendente</div>
+                    <div className="text-xl font-bold text-amber-100">
+                      {formatCurrency(resumoPendentes.valorTotal)}
+                    </div>
+                  </div>
+                  <div className="bg-[#2c2118] rounded-xl p-3">
+                    <div className="text-amber-400/70 text-xs">Clientes</div>
+                    <div className="text-xl font-bold text-amber-100">{resumoPendentes.clientes}</div>
+                  </div>
+                  <div className="bg-[#2c2118] rounded-xl p-3">
+                    <div className="text-amber-400/70 text-xs">Qtd. reservada</div>
+                    <div className="text-xl font-bold text-amber-100">{resumoPendentes.itensReservados}</div>
+                  </div>
+                </div>
+
+                {reservasPendentes.length > 0 && (
+                  <div className="mb-5">
+                    <h5 className="text-amber-300 text-sm font-medium mb-2">
+                      Reservas por produto (relação com estoque)
+                    </h5>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm min-w-[520px]">
+                        <thead>
+                          <tr className="text-amber-300 border-b border-amber-700">
+                            <th className="text-left py-2">Produto</th>
+                            <th className="text-right py-2">Reservado</th>
+                            <th className="text-right py-2">Estoque</th>
+                            <th className="text-right py-2">Livre</th>
+                            <th className="text-right py-2">Pedidos</th>
+                            <th className="text-right py-2">Valor</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {reservasPendentes.map((r) => {
+                            const estoqueFisico = quantidadeDisponivel(data.estoque, r.nome);
+                            const livre = Math.max(0, estoqueFisico - r.quantidade);
+                            return (
+                              <tr key={r.nome} className="border-b border-amber-800/30">
+                                <td className="py-2">{r.nome}</td>
+                                <td className="py-2 text-right text-amber-200">
+                                  {r.quantidade} {r.unidade}
+                                </td>
+                                <td className="py-2 text-right">
+                                  {estoqueFisico} {r.unidade}
+                                </td>
+                                <td
+                                  className={`py-2 text-right font-medium ${
+                                    livre <= 0 ? 'text-red-300' : 'text-emerald-200'
+                                  }`}
+                                >
+                                  {livre} {r.unidade}
+                                </td>
+                                <td className="py-2 text-right">{r.pedidos}</td>
+                                <td className="py-2 text-right">{formatCurrency(r.valorTotal)}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {vendasPendentes.length > 0 ? (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm min-w-[960px]">
+                      <thead>
+                        <tr className="text-amber-300 border-b border-amber-700">
+                          <th className="text-left py-2">Data</th>
+                          <th className="text-left py-2">Cliente</th>
+                          <th className="text-left py-2">Itens reservados</th>
+                          <th className="text-left py-2">Pagamento</th>
+                          <th className="text-right py-2">Total</th>
+                          <th className="text-right py-2 min-w-[200px]">Ações</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {vendasPendentes.map((v) => (
                           <tr
                             key={v.id}
-                            className={`border-b border-amber-800/30 ${vendaEditandoId === v.id ? 'bg-amber-900/30' : ''}`}
+                            className={`border-b border-amber-800/30 bg-amber-950/20 ${
+                              vendaEditandoId === v.id ? 'bg-amber-900/40' : ''
+                            }`}
                           >
                             <td className="py-2">{formatDate(v.data)}</td>
-                            <td className="py-2">{v.cliente}</td>
+                            <td className="py-2 font-medium">{v.cliente}</td>
                             <td className="py-2 text-amber-200/90">
                               {v.itens.length > 0 ? (
                                 <div className="space-y-1">
@@ -2413,43 +2558,118 @@ export default function ChocoGest() {
                                 '—'
                               )}
                             </td>
-                            <td className="py-2">
-                              <span
-                                className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${
-                                  status === 'concluida'
-                                    ? 'bg-emerald-900/50 text-emerald-200'
-                                    : 'bg-amber-800/60 text-amber-200'
-                                }`}
-                              >
-                                {STATUS_VENDA_LABEL[status]}
-                              </span>
-                            </td>
                             <td className="py-2">{v.formaPagamento}</td>
-                            <td className="py-2 text-right">{formatCurrency(v.total)}</td>
+                            <td className="py-2 text-right font-semibold text-amber-100">
+                              {formatCurrency(v.total)}
+                            </td>
                             <td className="py-2 text-right whitespace-nowrap">
                               <div className="flex flex-wrap justify-end gap-1">
-                                {!isVendaConcluida(v) && (
-                                  <Btn variant="secondary" onClick={() => concluirVenda(v.id)}>
-                                    Concluir
-                                  </Btn>
-                                )}
-                                <Btn variant="secondary" onClick={() => editarVenda(v)}>Editar</Btn>
-                                <Btn variant="danger" onClick={() => removerVenda(v.id)}>Excluir</Btn>
+                                <Btn variant="primary" onClick={() => concluirVenda(v.id)}>
+                                  Concluir
+                                </Btn>
+                                <Btn variant="secondary" onClick={() => editarVenda(v)}>
+                                  Editar
+                                </Btn>
+                                <Btn variant="danger" onClick={() => removerVenda(v.id)}>
+                                  Excluir
+                                </Btn>
                               </div>
                             </td>
                           </tr>
-                        );
-                      })}
+                        ))}
+                      </tbody>
+                      <tfoot>
+                        <tr className="font-bold text-amber-100 border-t border-amber-700">
+                          <td colSpan={4} className="py-3 text-right">
+                            Total pendente
+                          </td>
+                          <td className="py-3 text-right">
+                            {formatCurrency(resumoPendentes.valorTotal)}
+                          </td>
+                          <td />
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                ) : (
+                  <p className="text-amber-400/60 py-2">
+                    Nenhuma venda pendente. Use o status <strong>Pendente</strong> no formulário para
+                    reservar produtos sem baixar estoque.
+                  </p>
+                )}
+              </Card>
+
+              <Card className="mb-6">
+                <h4 className="text-amber-200 font-medium mb-1">Histórico de vendas concluídas</h4>
+                <p className="text-amber-400/70 text-xs mb-4">
+                  Vendas já finalizadas (estoque baixado e financeiro lançado).
+                </p>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm min-w-[960px]">
+                    <thead>
+                      <tr className="text-amber-300 border-b border-amber-700">
+                        <th className="text-left py-2">Data</th>
+                        <th className="text-left py-2">Cliente</th>
+                        <th className="text-left py-2">Itens</th>
+                        <th className="text-left py-2">Status</th>
+                        <th className="text-left py-2">Pagamento</th>
+                        <th className="text-right py-2">Total</th>
+                        <th className="text-right py-2 min-w-[160px]">Ações</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {vendasConcluidas.map((v) => (
+                        <tr
+                          key={v.id}
+                          className={`border-b border-amber-800/30 ${vendaEditandoId === v.id ? 'bg-amber-900/30' : ''}`}
+                        >
+                          <td className="py-2">{formatDate(v.data)}</td>
+                          <td className="py-2">{v.cliente}</td>
+                          <td className="py-2 text-amber-200/90">
+                            {v.itens.length > 0 ? (
+                              <div className="space-y-1">
+                                {v.itens.map((i) => (
+                                  <div key={i.id}>
+                                    {i.nome} — {i.quantidade} {i.unidade}
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              '—'
+                            )}
+                          </td>
+                          <td className="py-2">
+                            <span className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-emerald-900/50 text-emerald-200">
+                              {STATUS_VENDA_LABEL.concluida}
+                            </span>
+                          </td>
+                          <td className="py-2">{v.formaPagamento}</td>
+                          <td className="py-2 text-right">{formatCurrency(v.total)}</td>
+                          <td className="py-2 text-right whitespace-nowrap">
+                            <div className="flex flex-wrap justify-end gap-1">
+                              <Btn variant="secondary" onClick={() => editarVenda(v)}>
+                                Editar
+                              </Btn>
+                              <Btn variant="danger" onClick={() => removerVenda(v.id)}>
+                                Excluir
+                              </Btn>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
                     </tbody>
                   </table>
                 </div>
-                {data.vendas.length === 0 && <p className="text-amber-400/60 py-4">Nenhuma venda registrada.</p>}
+                {vendasConcluidas.length === 0 && (
+                  <p className="text-amber-400/60 py-4">Nenhuma venda concluída ainda.</p>
+                )}
               </Card>
 
               <Card>
                 <h4 className="text-amber-200 font-medium mb-1">Melhores clientes</h4>
                 <p className="text-amber-400/70 text-xs mb-4">
                   Ranking por valor total de vendas concluídas (quantidade e produtos comprados).
+                  Pedidos pendentes aparecem como contagem extra.
                 </p>
                 {rankingClientes.length > 0 ? (
                   <div className="overflow-x-auto">
@@ -2473,7 +2693,7 @@ export default function ChocoGest() {
                               {c.vendasConcluidas}
                               {c.vendasEmProcessamento > 0 && (
                                 <span className="block text-xs text-amber-400/70">
-                                  +{c.vendasEmProcessamento} em processamento
+                                  +{c.vendasEmProcessamento} pendente{c.vendasEmProcessamento > 1 ? 's' : ''}
                                 </span>
                               )}
                             </td>
@@ -2782,7 +3002,12 @@ export default function ChocoGest() {
                   <Field label="Produto Acabado">
                     <select className={inputCls} value={produtoPreco} onChange={(e) => setProdutoPreco(e.target.value)}>
                       <option value="">Selecione...</option>
-                      {produtosAcabados.map((p) => <option key={p.nome} value={p.nome}>{p.nome}</option>)}
+                      {produtosParaPrecificacao.map((p) => (
+                        <option key={p.nome} value={p.nome}>
+                          {p.nome}
+                          {p.quantidade > 0 ? ` (${p.quantidade} ${p.unidade})` : ' (sem estoque)'}
+                        </option>
+                      ))}
                     </select>
                   </Field>
                   <Field label="Margem de Lucro (%)">
@@ -2799,7 +3024,12 @@ export default function ChocoGest() {
                     <div className="bg-[#2c2118] rounded-xl p-4">
                       <div className="text-amber-300 text-sm">Custo Unitário</div>
                       <div className="text-2xl font-bold">{formatCurrency(custoProduto)}</div>
-                      <div className="text-xs text-amber-400/70 mt-1">por {produtoSelecionado.unidade}</div>
+                      <div className="text-xs text-amber-400/70 mt-1">
+                        por {produtoSelecionado.unidade}
+                        {produtoSelecionado.origemCusto === 'producao' && ' · da produção'}
+                        {produtoSelecionado.origemCusto === 'historico' && ' · do histórico'}
+                        {produtoSelecionado.origemCusto === 'estoque' && ' · do estoque'}
+                      </div>
                     </div>
                     <div className="bg-[#2c2118] rounded-xl p-4">
                       <div className="text-amber-300 text-sm">Margem ({margemLucro}%)</div>
@@ -2817,29 +3047,36 @@ export default function ChocoGest() {
                     Último preço registrado para <strong>{produtoPreco}</strong>:{' '}
                     <strong>{formatCurrency(ultimoPrecoProduto.precoSugerido)}</strong> em{' '}
                     {formatDate(ultimoPrecoProduto.data)} (margem {ultimoPrecoProduto.margemLucro}%)
+                    {precosDoProdutoSelecionado.length > 1 && (
+                      <> · {precosDoProdutoSelecionado.length} registros no histórico</>
+                    )}
                   </p>
                 )}
                 <div className="mt-4">
                   <Btn onClick={registrarPreco}>Registrar preço</Btn>
                 </div>
-                {produtosAcabados.length === 0 && (
+                {produtosParaPrecificacao.length === 0 && (
                   <p className="mt-4 text-amber-400/60">Cadastre produtos acabados no estoque ou via produção.</p>
                 )}
               </Card>
 
               <Card>
-                <h3 className="text-lg font-semibold text-amber-200 mb-4">
-                  {produtoPreco
-                    ? `Histórico de preços — ${produtoPreco}`
-                    : 'Histórico de preços gerados'}
+                <h3 className="text-lg font-semibold text-amber-200 mb-1">
+                  Histórico de preços gerados
                 </h3>
+                <p className="text-amber-400/70 text-sm mb-4">
+                  Todas as precificações anteriores ficam registradas aqui
+                  {produtoPreco
+                    ? ` (registros de ${produtoPreco} destacados).`
+                    : '.'}
+                </p>
                 {precosExibidos.length > 0 ? (
                   <div className="overflow-x-auto">
                     <table className="w-full text-sm min-w-[640px]">
                       <thead>
                         <tr className="text-amber-300 border-b border-amber-700">
                           <th className="text-left py-2">Data</th>
-                          {!produtoPreco && <th className="text-left py-2">Produto</th>}
+                          <th className="text-left py-2">Produto</th>
                           <th className="text-right py-2">Custo</th>
                           <th className="text-right py-2">Margem</th>
                           <th className="text-right py-2">Preço</th>
@@ -2847,33 +3084,40 @@ export default function ChocoGest() {
                         </tr>
                       </thead>
                       <tbody>
-                        {precosExibidos.map((p) => (
-                          <tr key={p.id} className="border-b border-amber-800/30">
-                            <td className="py-2">{formatDate(p.data)}</td>
-                            {!produtoPreco && <td className="py-2">{p.produto}</td>}
-                            <td className="py-2 text-right">
-                              {formatCurrency(p.custoUnitario)}
-                              <span className="text-xs text-amber-400/60"> /{p.unidade}</span>
-                            </td>
-                            <td className="py-2 text-right">{p.margemLucro}%</td>
-                            <td className="py-2 text-right font-semibold text-amber-100">
-                              {formatCurrency(p.precoSugerido)}
-                            </td>
-                            <td className="py-2 text-right">
-                              <Btn variant="danger" className="px-2 py-1" onClick={() => removerPreco(p.id)}>
-                                Excluir
-                              </Btn>
-                            </td>
-                          </tr>
-                        ))}
+                        {precosExibidos.map((p) => {
+                          const destacado =
+                            !!produtoPreco && nomeProdutoIgual(p.produto, produtoPreco);
+                          return (
+                            <tr
+                              key={p.id}
+                              className={`border-b border-amber-800/30 ${
+                                destacado ? 'bg-amber-900/35' : ''
+                              }`}
+                            >
+                              <td className="py-2">{formatDate(p.data)}</td>
+                              <td className="py-2">{p.produto}</td>
+                              <td className="py-2 text-right">
+                                {formatCurrency(p.custoUnitario)}
+                                <span className="text-xs text-amber-400/60"> /{p.unidade}</span>
+                              </td>
+                              <td className="py-2 text-right">{p.margemLucro}%</td>
+                              <td className="py-2 text-right font-semibold text-amber-100">
+                                {formatCurrency(p.precoSugerido)}
+                              </td>
+                              <td className="py-2 text-right">
+                                <Btn variant="danger" className="px-2 py-1" onClick={() => removerPreco(p.id)}>
+                                  Excluir
+                                </Btn>
+                              </td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
                 ) : (
                   <p className="text-amber-400/60 py-2">
-                    {produtoPreco
-                      ? `Nenhum preço registrado para ${produtoPreco} ainda.`
-                      : 'Nenhum preço registrado ainda. Calcule e clique em "Registrar preço".'}
+                    Nenhum preço registrado ainda. Calcule e clique em &quot;Registrar preço&quot;.
                   </p>
                 )}
               </Card>

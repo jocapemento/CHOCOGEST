@@ -8,7 +8,15 @@ import {
   filtrarSaldoProdutosGerados,
 } from './estoque';
 import { totalizarProdutosPrecificados } from './precificacao';
-import { formatarItensVenda, isVendaConcluida, rankingMelhoresClientes, STATUS_VENDA_LABEL } from './vendas';
+import {
+  formatarItensVenda,
+  isVendaConcluida,
+  listarVendasPendentes,
+  produtosReservadosPendentes,
+  rankingMelhoresClientes,
+  resumoVendasPendentes,
+  STATUS_VENDA_LABEL,
+} from './vendas';
 import type { AppData } from './types';
 import { formatCurrency, formatDate, sumBy } from './format';
 
@@ -142,29 +150,94 @@ export function gerarPdfVendas(data: AppData) {
   const doc = new jsPDF();
   addHeader(doc, 'Relatório de Vendas');
 
-  const rows = data.vendas.map((v) => [
-    formatDate(v.data),
-    v.cliente,
-    formatarItensVenda(v.itens),
-    STATUS_VENDA_LABEL[v.status ?? 'concluida'],
-    v.formaPagamento,
-    formatCurrency(v.total),
-  ]);
+  const pendentes = listarVendasPendentes(data.vendas);
+  const resumoPend = resumoVendasPendentes(data.vendas);
+  const reservas = produtosReservadosPendentes(data.vendas);
+  const concluidas = data.vendas.filter((v) => isVendaConcluida(v));
 
-  const totalConcluidas = sumBy(
-    data.vendas.filter((v) => isVendaConcluida(v)),
-    (v) => v.total
-  );
+  let y = 52;
+
+  doc.setFontSize(11);
+  doc.setTextColor(120, 53, 15);
+  doc.text('Relação de vendas pendentes', 14, y);
+  y += 4;
 
   autoTable(doc, {
-    startY: 52,
-    head: [['Data', 'Cliente', 'Itens (qtd)', 'Status', 'Pagamento', 'Total']],
-    body: rows,
-    foot: [['', '', '', '', 'Total concluídas', formatCurrency(totalConcluidas)]],
+    startY: y,
+    head: [['Data', 'Cliente', 'Itens reservados', 'Pagamento', 'Total']],
+    body:
+      pendentes.length > 0
+        ? pendentes.map((v) => [
+            formatDate(v.data),
+            v.cliente,
+            formatarItensVenda(v.itens),
+            v.formaPagamento,
+            formatCurrency(v.total),
+          ])
+        : [['—', 'Nenhuma venda pendente', '—', '—', '—']],
+    foot:
+      pendentes.length > 0
+        ? [
+            [
+              '',
+              `${resumoPend.quantidade} pedido(s) · ${resumoPend.clientes} cliente(s)`,
+              `Qtd reservada: ${resumoPend.itensReservados}`,
+              'Total pendente',
+              formatCurrency(resumoPend.valorTotal),
+            ],
+          ]
+        : undefined,
     theme: 'grid',
     headStyles: { fillColor: [180, 83, 9] },
     footStyles: { fillColor: [254, 243, 199], textColor: [60, 40, 30], fontStyle: 'bold' },
   });
+
+  if (reservas.length > 0) {
+    const lastTable = (doc as jsPDF & { lastAutoTable?: { finalY: number } }).lastAutoTable;
+    y = (lastTable?.finalY ?? y) + 10;
+    doc.setFontSize(11);
+    doc.setTextColor(120, 53, 15);
+    doc.text('Reservas por produto (vendas pendentes)', 14, y);
+
+    autoTable(doc, {
+      startY: y + 4,
+      head: [['Produto', 'Reservado', 'Pedidos', 'Valor']],
+      body: reservas.map((r) => [
+        r.nome,
+        `${r.quantidade} ${r.unidade}`,
+        String(r.pedidos),
+        formatCurrency(r.valorTotal),
+      ]),
+      theme: 'grid',
+      headStyles: { fillColor: [180, 83, 9] },
+    });
+  }
+
+  {
+    const lastTable = (doc as jsPDF & { lastAutoTable?: { finalY: number } }).lastAutoTable;
+    y = (lastTable?.finalY ?? y) + 10;
+    doc.setFontSize(11);
+    doc.setTextColor(120, 53, 15);
+    doc.text('Vendas concluídas', 14, y);
+
+    const totalConcluidas = sumBy(concluidas, (v) => v.total);
+    autoTable(doc, {
+      startY: y + 4,
+      head: [['Data', 'Cliente', 'Itens (qtd)', 'Status', 'Pagamento', 'Total']],
+      body: concluidas.map((v) => [
+        formatDate(v.data),
+        v.cliente,
+        formatarItensVenda(v.itens),
+        STATUS_VENDA_LABEL.concluida,
+        v.formaPagamento,
+        formatCurrency(v.total),
+      ]),
+      foot: [['', '', '', '', 'Total concluídas', formatCurrency(totalConcluidas)]],
+      theme: 'grid',
+      headStyles: { fillColor: [180, 83, 9] },
+      footStyles: { fillColor: [254, 243, 199], textColor: [60, 40, 30], fontStyle: 'bold' },
+    });
+  }
 
   const ranking = rankingMelhoresClientes(data.vendas);
   if (ranking.length > 0) {
@@ -181,7 +254,9 @@ export function gerarPdfVendas(data: AppData) {
       body: ranking.map((c, idx) => [
         String(idx + 1),
         c.cliente,
-        String(c.vendasConcluidas),
+        c.vendasEmProcessamento > 0
+          ? `${c.vendasConcluidas} (+${c.vendasEmProcessamento} pend.)`
+          : String(c.vendasConcluidas),
         String(c.quantidadeTotal),
         c.produtos.map((p) => `${p.nome} ${p.quantidade}${p.unidade}`).join('; '),
         formatCurrency(c.valorTotal),
