@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
@@ -23,6 +23,28 @@ export const metadata: Metadata = {
   icons: {
     icon: `${basePath}/favicon.ico`,
   },
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "ChocoGest",
+  },
+  formatDetection: {
+    telephone: false,
+  },
+};
+
+/** Critérios de viewport para smartphone, tablet e desktop. */
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 5,
+  userScalable: true,
+  viewportFit: "cover",
+  themeColor: [
+    { media: "(prefers-color-scheme: dark)", color: "#2c2118" },
+    { media: "(prefers-color-scheme: light)", color: "#2c2118" },
+  ],
+  colorScheme: "dark",
 };
 
 export default function RootLayout({

@@ -1,10 +1,29 @@
 @import "tailwindcss";
 
+/*
+ * Critérios de funcionamento multi-dispositivo (ChocoGest)
+ * ---------------------------------------------------------
+ * 1. Viewport: width=device-width, scale 1 (layout.tsx viewport export)
+ * 2. Breakpoints Tailwind: sm 640 · md 768 · lg 1024 · xl 1280
+ * 3. Toque: alvos ≥ 44px; inputs ≥ 16px (evita zoom iOS)
+ * 4. Navegação: menu lateral ≥ lg; abas horizontais sticky no mobile
+ * 5. Tabelas: scroll horizontal com indicação; sem overflow na página
+ * 6. Formulários: 1 coluna no telefone; 2+ a partir de sm/lg
+ * 7. Safe area: notch / home indicator (env(safe-area-inset-*))
+ * 8. Legibilidade: contraste âmbar/chocolate; sem hover exclusivo
+ * 9. Performance: background fixed só em desktop (scroll mais leve no mobile)
+ */
+
 :root {
   --background: #2c2118;
   --foreground: #fef3c7;
   --card: #4a3828;
   --accent: #d97706;
+  --touch-min: 44px;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
 }
 
 @theme inline {
@@ -15,21 +34,108 @@
   --font-mono: var(--font-geist-mono);
 }
 
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-geist-sans), system-ui, sans-serif;
+  /* Evita “pulo” horizontal em telas estreitas */
+  overflow-x: clip;
+  padding-left: var(--safe-left);
+  padding-right: var(--safe-right);
 }
 
 .bg-chocolate {
   background-color: var(--background);
   background-size: cover;
   background-position: center;
-  background-attachment: fixed;
+  background-attachment: scroll;
 }
 
+@media (min-width: 1024px) {
+  .bg-chocolate {
+    background-attachment: fixed;
+  }
+}
+
+/* Toque: sem atraso de double-tap zoom em controles */
 input,
 select,
-textarea {
+textarea,
+button {
   color-scheme: dark;
+  touch-action: manipulation;
+}
+
+/*
+ * iOS Safari: campos com fonte < 16px disparam zoom ao focar.
+ * !important vence utilitários Tailwind (text-sm) no mobile.
+ */
+@media (max-width: 639.98px) {
+  input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']),
+  select,
+  textarea {
+    font-size: 16px !important;
+    min-height: var(--touch-min);
+  }
+}
+
+input:not([type='checkbox']):not([type='radio']):not([type='file']),
+select,
+textarea {
+  min-height: var(--touch-min);
+  border-radius: 0.75rem;
+}
+
+/* Alvos de toque confortáveis */
+.touch-target {
+  min-height: var(--touch-min);
+  min-width: var(--touch-min);
+}
+
+/* Tabelas e listas largas: scroll horizontal sem quebrar o layout */
+.table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+  max-width: 100%;
+}
+
+.table-scroll table {
+  width: 100%;
+}
+
+/* Abas mobile: scroll com snap suave */
+.tabs-scroll {
+  display: flex;
+  gap: 0.5rem;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x proximity;
+  scrollbar-width: thin;
+}
+
+.tabs-scroll > * {
+  scroll-snap-align: start;
+  flex-shrink: 0;
+}
+
+/* Esconde barra de scroll fina em WebKit quando desejado */
+.tabs-scroll::-webkit-scrollbar {
+  height: 4px;
+}
+
+.tabs-scroll::-webkit-scrollbar-thumb {
+  background: rgba(217, 119, 6, 0.45);
+  border-radius: 999px;
+}
+
+/* Área inferior com home indicator (iPhone) */
+.safe-bottom {
+  padding-bottom: max(0.75rem, var(--safe-bottom));
 }

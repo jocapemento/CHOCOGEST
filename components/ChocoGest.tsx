@@ -497,19 +497,21 @@ const MOV_BANCO_FORM_INICIAL = {
   bancoId: 1,
 };
 
-// Shared UI
+// Shared UI — alvos de toque e tipografia pensados para smartphone (ver globals.css)
 function SectionTitle({ children, action }: { children: React.ReactNode; action?: React.ReactNode }) {
   return (
-    <div className="flex items-center justify-between mb-6">
-      <h2 className="text-2xl font-bold text-amber-100">{children}</h2>
-      {action}
+    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4 sm:mb-6">
+      <h2 className="text-xl sm:text-2xl font-bold text-amber-100">{children}</h2>
+      {action ? <div className="flex flex-wrap gap-2 shrink-0">{action}</div> : null}
     </div>
   );
 }
 
 function Card({ children, className = '' }: { children: React.ReactNode; className?: string }) {
   return (
-    <div className={`bg-[#4a3828]/80 backdrop-blur rounded-2xl p-6 border border-amber-800/50 ${className}`}>
+    <div
+      className={`bg-[#4a3828]/80 backdrop-blur rounded-2xl p-4 sm:p-6 border border-amber-800/50 ${className}`}
+    >
       {children}
     </div>
   );
@@ -520,21 +522,25 @@ function Btn({
   onClick,
   variant = 'primary',
   className = '',
+  type = 'button',
 }: {
   children: React.ReactNode;
   onClick?: () => void;
   variant?: 'primary' | 'secondary' | 'danger';
   className?: string;
+  type?: 'button' | 'submit' | 'reset';
 }) {
   const styles = {
-    primary: 'bg-amber-600 hover:bg-amber-500 text-white',
-    secondary: 'bg-amber-900/60 hover:bg-amber-800 text-amber-100 border border-amber-700',
-    danger: 'bg-red-800 hover:bg-red-700 text-white',
+    primary: 'bg-amber-600 hover:bg-amber-500 active:bg-amber-700 text-white',
+    secondary:
+      'bg-amber-900/60 hover:bg-amber-800 active:bg-amber-950 text-amber-100 border border-amber-700',
+    danger: 'bg-red-800 hover:bg-red-700 active:bg-red-900 text-white',
   };
   return (
     <button
+      type={type}
       onClick={onClick}
-      className={`px-4 py-2 rounded-xl text-sm font-medium transition-colors ${styles[variant]} ${className}`}
+      className={`touch-target inline-flex items-center justify-center px-4 py-2.5 rounded-xl text-sm font-medium transition-colors ${styles[variant]} ${className}`}
     >
       {children}
     </button>
@@ -543,7 +549,7 @@ function Btn({
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <label className="block">
+    <label className="block min-w-0">
       <span className="text-amber-200/80 text-sm mb-1 block">{label}</span>
       {children}
     </label>
@@ -559,7 +565,7 @@ function DateField({ label, value, onChange }: { label: string; value: string; o
 }
 
 const inputCls =
-  'w-full bg-[#2c2118] border border-amber-700/60 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-amber-500';
+  'w-full min-h-[44px] bg-[#2c2118] border border-amber-700/60 rounded-xl px-3 py-2.5 text-base sm:text-sm text-white focus:outline-none focus:border-amber-500';
 
 const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? '';
 const chocolateBgStyle: React.CSSProperties = {
@@ -1655,44 +1661,97 @@ export default function ChocoGest() {
   }
 
   return (
-    <div className="min-h-screen bg-chocolate text-white" style={chocolateBgStyle}>
-      <header className="bg-amber-950/60 backdrop-blur py-5 border-b border-amber-700 sticky top-0 z-10">
-        <div className="max-w-7xl mx-auto px-6 flex items-center justify-between gap-4 flex-wrap">
-          <div className="flex items-center gap-4">
+    <div className="min-h-screen bg-chocolate text-white safe-bottom" style={chocolateBgStyle}>
+      {/* Header + abas mobile sticky (critério: navegação sempre acessível no telefone) */}
+      <header className="bg-amber-950/90 backdrop-blur border-b border-amber-700 sticky top-0 z-20 pt-[var(--safe-top)]">
+        <div className="max-w-7xl mx-auto px-3 sm:px-6 py-3 sm:py-4 flex items-center justify-between gap-2 sm:gap-4">
+          <div className="flex items-center gap-2 sm:gap-4 min-w-0">
             <img
               src={`${basePath}/Logo.jpeg`}
               alt="Logo ChocoGest"
-              className="h-14 w-auto object-contain rounded-lg"
+              className="h-10 sm:h-14 w-auto object-contain rounded-lg shrink-0"
             />
-            <div>
-              <h1 className="text-3xl font-bold">ChocoGest</h1>
-              <p className="text-amber-300 text-sm">Fábrica de Chocolate Bean-to-Bar • Bahia</p>
+            <div className="min-w-0">
+              <h1 className="text-xl sm:text-3xl font-bold truncate">ChocoGest</h1>
+              <p className="text-amber-300 text-xs sm:text-sm hidden sm:block truncate">
+                Fábrica Bean-to-Bar • Bahia
+              </p>
             </div>
           </div>
-          <div className="flex gap-2 flex-wrap">
-            <Btn onClick={() => exportBackup(data)}>📤 Exportar Backup</Btn>
-            <Btn variant="secondary" onClick={() => fileInputRef.current?.click()}>
-              📥 Importar Backup
+          <div className="flex gap-1.5 sm:gap-2 flex-wrap justify-end shrink-0">
+            <Btn onClick={() => exportBackup(data)} className="!px-2.5 sm:!px-4 text-xs sm:text-sm">
+              <span className="sm:hidden" aria-hidden>
+                📤
+              </span>
+              <span className="hidden sm:inline">📤 Exportar Backup</span>
+              <span className="sm:hidden sr-only">Exportar Backup</span>
             </Btn>
-            <input ref={fileInputRef} type="file" accept=".json" className="hidden" onChange={handleImportBackup} />
-            <Btn variant="secondary" onClick={() => gerarPdfDashboard(data)}>
-              📄 PDF Resumo
+            <Btn
+              variant="secondary"
+              onClick={() => fileInputRef.current?.click()}
+              className="!px-2.5 sm:!px-4 text-xs sm:text-sm"
+            >
+              <span className="sm:hidden" aria-hidden>
+                📥
+              </span>
+              <span className="hidden sm:inline">📥 Importar Backup</span>
+              <span className="sm:hidden sr-only">Importar Backup</span>
+            </Btn>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".json"
+              className="hidden"
+              onChange={handleImportBackup}
+            />
+            <Btn
+              variant="secondary"
+              onClick={() => gerarPdfDashboard(data)}
+              className="!px-2.5 sm:!px-4 text-xs sm:text-sm"
+            >
+              <span className="sm:hidden" aria-hidden>
+                📄
+              </span>
+              <span className="hidden sm:inline">📄 PDF Resumo</span>
+              <span className="sm:hidden sr-only">PDF Resumo</span>
             </Btn>
           </div>
         </div>
+
+        {/* Abas horizontais no mobile/tablet; sticky junto ao header */}
+        <nav
+          className="lg:hidden tabs-scroll px-3 pb-2.5 border-t border-amber-800/50 bg-[#3a2c22]/80"
+          aria-label="Módulos"
+        >
+          {TABS.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setActiveTab(tab.id)}
+              className={`touch-target shrink-0 px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
+                activeTab === tab.id
+                  ? 'bg-amber-600 text-white shadow'
+                  : 'bg-amber-900/40 text-amber-100/90 active:bg-amber-800/60'
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </nav>
       </header>
 
-      <div className="flex max-w-7xl mx-auto items-start">
+      <div className="flex flex-col lg:flex-row max-w-7xl mx-auto items-stretch lg:items-start w-full">
         <aside className="w-72 shrink-0 self-start sticky top-20 z-[5] max-h-[calc(100vh-5rem)] overflow-y-auto overscroll-contain bg-[#3a2c22]/70 backdrop-blur p-4 border-r border-amber-800 hidden lg:block">
-          <nav className="space-y-1">
+          <nav className="space-y-1" aria-label="Módulos">
             {TABS.map((tab) => (
               <button
                 key={tab.id}
+                type="button"
                 onClick={() => setActiveTab(tab.id)}
-                className={`w-full text-left px-4 py-3 rounded-xl text-sm transition-all ${
+                className={`touch-target w-full text-left px-4 py-3 rounded-xl text-sm transition-all ${
                   activeTab === tab.id
                     ? 'bg-amber-600 text-white shadow-lg'
-                    : 'hover:bg-amber-900/60 text-gray-300'
+                    : 'hover:bg-amber-900/60 active:bg-amber-900/80 text-gray-300'
                 }`}
               >
                 {tab.label}
@@ -1701,22 +1760,7 @@ export default function ChocoGest() {
           </nav>
         </aside>
 
-        {/* Mobile tabs */}
-        <div className="lg:hidden w-full px-4 py-2 overflow-x-auto flex gap-2 border-b border-amber-800 bg-[#3a2c22]/70 backdrop-blur">
-          {TABS.map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`shrink-0 px-3 py-2 rounded-lg text-xs ${
-                activeTab === tab.id ? 'bg-amber-600' : 'bg-amber-900/40'
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
-
-        <main className="flex-1 p-6 lg:p-10 min-w-0">
+        <main className="flex-1 p-3 sm:p-6 lg:p-10 min-w-0 w-full">
           {/* DASHBOARD */}
           {activeTab === 'dashboard' && (
             <div>
@@ -1825,7 +1869,7 @@ export default function ChocoGest() {
                   Preços da aba Precificação. Produtos sem preço registrado aparecem apenas com custo.
                 </p>
                 {resumoPrecificacaoDashboard.itens.length > 0 ? (
-                  <div className="overflow-x-auto">
+                  <div className="table-scroll">
                     <table className="w-full text-sm min-w-[900px]">
                       <thead>
                         <tr className="text-amber-300 border-b border-amber-700">
@@ -2001,7 +2045,7 @@ export default function ChocoGest() {
               </Card>
               <Card className="mb-6">
                 <h4 className="text-amber-200 font-medium mb-4">Saldo — Matérias-primas</h4>
-                <div className="overflow-x-auto">
+                <div className="table-scroll">
                   <table className="w-full text-sm min-w-[520px]">
                     <thead>
                       <tr className="text-amber-300 border-b border-amber-700">
@@ -2035,7 +2079,7 @@ export default function ChocoGest() {
               </Card>
               <Card className="mb-6">
                 <h4 className="text-amber-200 font-medium mb-4">Saldo — Produtos gerados</h4>
-                <div className="overflow-x-auto">
+                <div className="table-scroll">
                   <table className="w-full text-sm min-w-[520px]">
                     <thead>
                       <tr className="text-amber-300 border-b border-amber-700">
@@ -2074,7 +2118,7 @@ export default function ChocoGest() {
               </Card>
               <Card className="mb-6">
                 <h4 className="text-amber-200 font-medium mb-4">Lançamentos — Matérias-primas</h4>
-                <div className="overflow-x-auto">
+                <div className="table-scroll">
                   <table className="w-full text-sm min-w-[600px]">
                     <thead>
                       <tr className="text-amber-300 border-b border-amber-700">
@@ -2114,7 +2158,7 @@ export default function ChocoGest() {
               </Card>
               <Card>
                 <h4 className="text-amber-200 font-medium mb-4">Lançamentos — Produtos gerados</h4>
-                <div className="overflow-x-auto">
+                <div className="table-scroll">
                   <table className="w-full text-sm min-w-[600px]">
                     <thead>
                       <tr className="text-amber-300 border-b border-amber-700">
@@ -2251,7 +2295,7 @@ export default function ChocoGest() {
               </Card>
               <Card>
                 <h4 className="text-amber-200 font-medium mb-4">Histórico de compras</h4>
-                <div className="overflow-x-auto">
+                <div className="table-scroll">
                   <table className="w-full text-sm min-w-[800px]">
                     <thead>
                       <tr className="text-amber-300 border-b border-amber-700">
@@ -2479,7 +2523,7 @@ export default function ChocoGest() {
                     <h5 className="text-amber-300 text-sm font-medium mb-2">
                       Reservas por produto (relação com estoque)
                     </h5>
-                    <div className="overflow-x-auto">
+                    <div className="table-scroll">
                       <table className="w-full text-sm min-w-[520px]">
                         <thead>
                           <tr className="text-amber-300 border-b border-amber-700">
@@ -2523,7 +2567,7 @@ export default function ChocoGest() {
                 )}
 
                 {vendasPendentes.length > 0 ? (
-                  <div className="overflow-x-auto">
+                  <div className="table-scroll">
                     <table className="w-full text-sm min-w-[960px]">
                       <thead>
                         <tr className="text-amber-300 border-b border-amber-700">
@@ -2604,7 +2648,7 @@ export default function ChocoGest() {
                 <p className="text-amber-400/70 text-xs mb-4">
                   Vendas já finalizadas (estoque baixado e financeiro lançado).
                 </p>
-                <div className="overflow-x-auto">
+                <div className="table-scroll">
                   <table className="w-full text-sm min-w-[960px]">
                     <thead>
                       <tr className="text-amber-300 border-b border-amber-700">
@@ -2672,7 +2716,7 @@ export default function ChocoGest() {
                   Pedidos pendentes aparecem como contagem extra.
                 </p>
                 {rankingClientes.length > 0 ? (
-                  <div className="overflow-x-auto">
+                  <div className="table-scroll">
                     <table className="w-full text-sm min-w-[800px]">
                       <thead>
                         <tr className="text-amber-300 border-b border-amber-700">
@@ -2908,7 +2952,7 @@ export default function ChocoGest() {
                 </div>
               </Card>
               <Card>
-                <div className="overflow-x-auto">
+                <div className="table-scroll">
                   <table className="w-full text-sm min-w-[640px]">
                     <thead><tr className="text-amber-300 border-b border-amber-700">
                       <th className="text-left py-2">Data</th><th className="text-left py-2">Lote</th>
@@ -2956,7 +3000,7 @@ export default function ChocoGest() {
               <Card className="mt-6">
                 <h3 className="text-lg font-semibold text-amber-200 mb-4">Totalização de perdas por produto</h3>
                 {totalPerdasPorProduto.length > 0 ? (
-                  <div className="overflow-x-auto">
+                  <div className="table-scroll">
                     <table className="w-full text-sm min-w-[560px]">
                       <thead>
                         <tr className="text-amber-300 border-b border-amber-700">
@@ -3071,7 +3115,7 @@ export default function ChocoGest() {
                     : '.'}
                 </p>
                 {precosExibidos.length > 0 ? (
-                  <div className="overflow-x-auto">
+                  <div className="table-scroll">
                     <table className="w-full text-sm min-w-[640px]">
                       <thead>
                         <tr className="text-amber-300 border-b border-amber-700">
@@ -3184,7 +3228,7 @@ export default function ChocoGest() {
               </div>
               <Card>
                 <h4 className="text-amber-200 font-medium mb-4">Soma das parcelas por cartão e por mês</h4>
-                <div className="overflow-x-auto">
+                <div className="table-scroll">
                   <table className="w-full text-sm min-w-[480px]">
                     <thead>
                       <tr className="text-amber-300 border-b border-amber-700">
@@ -3272,7 +3316,7 @@ export default function ChocoGest() {
               </Card>
               <Card>
                 <h4 className="text-amber-200 font-medium mb-4">Histórico de lançamentos</h4>
-                <div className="overflow-x-auto">
+                <div className="table-scroll">
                   <table className="w-full text-sm min-w-[640px]">
                     <thead>
                       <tr className="text-amber-300 border-b border-amber-700">
@@ -3403,7 +3447,7 @@ export default function ChocoGest() {
               </Card>
               <Card>
                 <h4 className="text-amber-200 font-medium mb-4">Histórico de lançamentos</h4>
-                <div className="overflow-x-auto">
+                <div className="table-scroll">
                   <table className="w-full text-sm min-w-[720px]">
                     <thead>
                       <tr className="text-amber-300 border-b border-amber-700">
