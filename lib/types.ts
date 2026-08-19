@@ -50,13 +50,28 @@ export interface Venda {
   itens: ItemMovimentacao[];
 }
 
+/** Produto de saída de um lote de produção (pode haver vários no mesmo lote). */
+export interface ProdutoGeradoProducao {
+  nome: string;
+  quantidade: number;
+  unidade: string;
+  /** Custo rateado por massa a partir do custo total dos ingredientes. */
+  custoAlocado?: number;
+}
+
 export interface Producao {
   id: number;
   data: string;
   lote: string;
+  /**
+   * Campos legados (espelham o 1º item de `produtos`) para backups e telas antigas.
+   * Prefira sempre `produtos` para leitura/escrita.
+   */
   produto: string;
   quantidade: number;
   unidade: string;
+  /** Um ou mais produtos gerados no mesmo lote (ex.: Nibs + Casca a partir de Amêndoa Torrada). */
+  produtos: ProdutoGeradoProducao[];
   ingredientes: Array<{
     nome: string;
     quantidade: number;
@@ -66,7 +81,7 @@ export interface Producao {
     tipo?: TipoItem;
   }>;
   custoEstimado: number;
-  /** Perda calculada: entrada − saída (mesma unidade). */
+  /** Perda calculada: entrada − soma das saídas (mesma unidade). */
   quantidadePerdida?: number;
   /** Perda percentual calculada a partir da entrada e da saída. */
   percentualPerda?: number;
@@ -76,6 +91,20 @@ export interface CartaoModel {
   id: number;
   nome: string;
   limite?: number;
+}
+
+export type OrigemQuitacaoCartao = 'caixa' | 'banco';
+
+/** Pagamento (quitação) de um empréstimo gerado por compra no cartão. */
+export interface QuitacaoCartao {
+  id: number;
+  data: string;
+  cartao: string;
+  compraId: number;
+  valor: number;
+  origem: OrigemQuitacaoCartao;
+  banco?: string;
+  descricao?: string;
 }
 
 export interface BancoModel {
@@ -128,6 +157,7 @@ export interface AppData {
   movimentosCaixa: MovimentoFinanceiro[];
   movimentosBanco: MovimentoFinanceiro[];
   precosGerados: PrecoGerado[];
+  quitacoesCartao: QuitacaoCartao[];
 }
 
 export const TIPOS_ITEM: TipoItem[] = [
@@ -141,6 +171,17 @@ export const TIPOS_ITEM: TipoItem[] = [
   'Outros',
 ];
 
+export const TIPOS_ITEM_LABEL: Record<TipoItem, string> = {
+  MateriaPrima: 'Matéria-prima',
+  ProdutoAcabado: 'Produto acabado',
+  Equipamento: 'Equipamento',
+  Energia: 'Energia',
+  Agua: 'Água',
+  Embalagem: 'Embalagem',
+  Transporte: 'Transporte',
+  Outros: 'Outros',
+};
+
 export const STORAGE_KEYS = {
   estoque: 'chocogest_estoque',
   compras: 'chocogest_compras',
@@ -152,6 +193,7 @@ export const STORAGE_KEYS = {
   caixa: 'chocogest_caixa',
   banco: 'chocogest_banco',
   precos: 'chocogest_precos',
+  quitacoesCartao: 'chocogest_quitacoes_cartao',
 } as const;
 
 export const EMPTY_DATA: AppData = {
@@ -165,4 +207,5 @@ export const EMPTY_DATA: AppData = {
   movimentosCaixa: [],
   movimentosBanco: [],
   precosGerados: [],
+  quitacoesCartao: [],
 };

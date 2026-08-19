@@ -1,4 +1,13 @@
-import type { Compra, EstoqueItem, ItemMovimentacao, Producao, TipoItem, Venda } from '@/lib/types';
+import { ehProdutoGeradoCadeia, tipoEstoqueCadeia } from '@/lib/cadeia-producao';
+import type {
+  Compra,
+  EstoqueItem,
+  ItemMovimentacao,
+  Producao,
+  ProdutoGeradoProducao,
+  TipoItem,
+  Venda,
+} from '@/lib/types';
 
 export interface VendaComProduto {
   vendaId: number;
@@ -160,6 +169,7 @@ export function resolverTipoIngredienteProducao(
   ingrediente: Producao['ingredientes'][number],
   producoes: Producao[]
 ): TipoItem {
+  if (ehProdutoGeradoCadeia(ingrediente.nome)) return 'ProdutoAcabado';
   if (ingrediente.tipo) return ingrediente.tipo;
   if (isProdutoGerado(ingrediente.nome, producoes)) return 'ProdutoAcabado';
   return 'MateriaPrima';
@@ -171,9 +181,10 @@ export function saldoIngredienteProducao(
   producoes: Producao[],
   tipo?: TipoItem
 ): SaldoEstoque | undefined {
-  const tipoResolvido =
-    tipo ??
-    (isProdutoGerado(nome, producoes) ? ('ProdutoAcabado' as TipoItem) : ('MateriaPrima' as TipoItem));
+  const tipoResolvido = ehProdutoGeradoCadeia(nome)
+    ? ('ProdutoAcabado' as TipoItem)
+    : (tipo ??
+      (isProdutoGerado(nome, producoes) ? ('ProdutoAcabado' as TipoItem) : ('MateriaPrima' as TipoItem)));
 
   return agruparEstoquePorNomeTipo(estoque).find(
     (s) => s.nome.toLowerCase() === nome.toLowerCase() && s.tipo === tipoResolvido
@@ -246,6 +257,10 @@ export interface ItemCatalogo {
   valorUnit: number;
 }
 
+const ITENS_CONHECIDOS_ESTOQUE: ItemCatalogo[] = [
+  { nome: 'Amêndoa Torrada', tipo: 'ProdutoAcabado', unidade: 'kg', valorUnit: 0 },
+];
+
 export function catalogoItensLancados(compras: Compra[], estoque: EstoqueItem[]): ItemCatalogo[] {
   const map = new Map<string, ItemCatalogo>();
 
@@ -254,7 +269,7 @@ export function catalogoItensLancados(compras: Compra[], estoque: EstoqueItem[])
       if (!item.nome.trim()) continue;
       map.set(item.nome.toLowerCase(), {
         nome: item.nome,
-        tipo: item.tipo,
+        tipo: tipoEstoqueCadeia(item.nome, item.tipo),
         unidade: item.unidade,
         valorUnit: item.valorUnit,
       });
@@ -266,10 +281,20 @@ export function catalogoItensLancados(compras: Compra[], estoque: EstoqueItem[])
     if (!map.has(key)) {
       map.set(key, {
         nome: item.nome,
-        tipo: item.tipo,
+        tipo: tipoEstoqueCadeia(item.nome, item.tipo),
         unidade: item.unidade,
         valorUnit: item.valorUnit,
       });
+    }
+  }
+
+  for (const item of ITENS_CONHECIDOS_ESTOQUE) {
+    const key = item.nome.toLowerCase();
+    if (!map.has(key)) {
+      map.set(key, item);
+    } else {
+      const existing = map.get(key)!;
+      map.set(key, { ...existing, tipo: tipoEstoqueCadeia(existing.nome, existing.tipo) });
     }
   }
 
@@ -291,6 +316,107 @@ export function totalEntradaIngredientes(
   return { total, unidade };
 }
 
+/** Normaliza saídas de um lote: usa `produtos` ou cai no campo legado `produto`. */
+export function produtosDaProducao(
+  producao: Pick<Producao, 'produto' | 'quantidade' | 'unidade'> & {
+    produtos?: ProdutoGeradoProducao[];
+  }
+): ProdutoGeradoProducao[] {
+  if (Array.isArray(producao.produtos) && producao.produtos.length > 0) {
+    return producao.produtos
+      .map((p) => ({
+        nome: (p.nome ?? '').trim(),
+        quantidade: Number(p.quantidade) || 0,
+        unidade: (p.unidade ?? 'kg').trim() || 'kg',
+        custoAlocado: p.custoAlocado,
+      }))
+      .filter((p) => p.nome.length > 0);
+  }
+
+  const nome = (producao.produto ?? '').trim();
+  if (!nome) return [];
+  return [
+    {
+      nome,
+      quantidade: Number(producao.quantidade) || 0,
+      unidade: (producao.unidade ?? 'kg').trim() || 'kg',
+    },
+  ];
+}
+
+export function rotuloProdutosProducao(
+  producao: Pick<Producao, 'produto' | 'quantidade' | 'unidade'> & {
+    produtos?: ProdutoGeradoProducao[];
+  }
+): string {
+  const produtos = produtosDaProducao(producao);
+  if (produtos.length === 0) return producao.produto?.trim() || '—';
+  return produtos.map((p) => p.nome).join(' + ');
+}
+
+export function totalSaidaProdutos(
+  produtos: ProdutoGeradoProducao[]
+): { total: number; unidade: string } | null {
+  if (produtos.length === 0) return null;
+
+  const unidade = produtos[0].unidade || 'kg';
+  for (const p of produtos) {
+    if ((p.unidade || 'kg').toLowerCase() !== unidade.toLowerCase()) return null;
+  }
+
+  const total = produtos.reduce((acc, p) => acc + p.quantidade, 0);
+  return { total, unidade };
+}
+
+/** Rateia o custo total dos ingredientes por massa entre os produtos de saída. */
+export function alocarCustoEntreProdutos(
+  custoTotal: number,
+  produtos: ProdutoGeradoProducao[]
+): ProdutoGeradoProducao[] {
+  const saida = totalSaidaProdutos(produtos);
+  const totalQtd = saida?.total ?? 0;
+
+  if (totalQtd <= 0) {
+    return produtos.map((p) => ({ ...p, custoAlocado: 0 }));
+  }
+
+  return produtos.map((p) => ({
+    ...p,
+    custoAlocado: arredondarQuantidade((custoTotal * p.quantidade) / totalQtd),
+  }));
+}
+
+/** Espelha o 1º produto nos campos legados `produto`/`quantidade`/`unidade`. */
+export function espelharCamposLegadoProducao(produtos: ProdutoGeradoProducao[]): {
+  produto: string;
+  quantidade: number;
+  unidade: string;
+} {
+  const primeiro = produtos[0];
+  if (!primeiro) {
+    return { produto: '', quantidade: 0, unidade: 'kg' };
+  }
+  return {
+    produto: primeiro.nome,
+    quantidade: primeiro.quantidade,
+    unidade: primeiro.unidade || 'kg',
+  };
+}
+
+export function montarProducaoComProdutos(
+  base: Omit<Producao, 'produto' | 'quantidade' | 'unidade' | 'produtos'> & {
+    produtos: ProdutoGeradoProducao[];
+  }
+): Producao {
+  const produtos = alocarCustoEntreProdutos(base.custoEstimado, base.produtos);
+  const legado = espelharCamposLegadoProducao(produtos);
+  return {
+    ...base,
+    ...legado,
+    produtos,
+  };
+}
+
 export interface PerdaProducao {
   entrada: number;
   unidade: string;
@@ -304,12 +430,26 @@ function arredondarQuantidade(valor: number): number {
 }
 
 export function calcularPerdaProducao(
-  producao: Pick<Producao, 'ingredientes' | 'quantidade'>
+  producao: Pick<Producao, 'ingredientes'> & {
+    quantidade?: number;
+    produto?: string;
+    unidade?: string;
+    produtos?: ProdutoGeradoProducao[];
+  }
 ): PerdaProducao | null {
   const entradaInfo = totalEntradaIngredientes(producao.ingredientes);
   if (!entradaInfo || entradaInfo.total <= 0) return null;
 
-  const saida = arredondarQuantidade(producao.quantidade);
+  const produtos = produtosDaProducao({
+    produto: producao.produto ?? '',
+    quantidade: producao.quantidade ?? 0,
+    unidade: producao.unidade ?? 'kg',
+    produtos: producao.produtos,
+  });
+  const saidaInfo = totalSaidaProdutos(produtos);
+  if (!saidaInfo) return null;
+
+  const saida = arredondarQuantidade(saidaInfo.total);
   const perdaQuantidade = arredondarQuantidade(Math.max(0, entradaInfo.total - saida));
   const perdaPercentual =
     entradaInfo.total > 0
@@ -328,8 +468,10 @@ export function calcularPerdaProducao(
 export function nomesProdutosGerados(producoes: Producao[]): Set<string> {
   const nomes = new Set<string>();
   for (const p of producoes) {
-    const nome = p.produto.trim();
-    if (nome) nomes.add(nome.toLowerCase());
+    for (const prod of produtosDaProducao(p)) {
+      const nome = prod.nome.trim();
+      if (nome) nomes.add(nome.toLowerCase());
+    }
   }
   return nomes;
 }
@@ -373,10 +515,12 @@ export function filtrarLancamentosProdutosGerados(
 export function catalogoNomesProdutos(producoes: Producao[]): string[] {
   const map = new Map<string, string>();
   for (const p of producoes) {
-    const nome = p.produto.trim();
-    if (!nome) continue;
-    const key = nome.toLowerCase();
-    if (!map.has(key)) map.set(key, nome);
+    for (const prod of produtosDaProducao(p)) {
+      const nome = prod.nome.trim();
+      if (!nome) continue;
+      const key = nome.toLowerCase();
+      if (!map.has(key)) map.set(key, nome);
+    }
   }
   return Array.from(map.values()).sort((a, b) => a.localeCompare(b, 'pt-BR'));
 }
@@ -398,7 +542,8 @@ export function totalizarPerdasPorProduto(producoes: Producao[]): TotalPerdaProd
     const perda = calcularPerdaProducao(p);
     if (!perda || perda.perdaQuantidade <= 0) continue;
 
-    const key = `${p.produto.toLowerCase()}|${perda.unidade.toLowerCase()}`;
+    const rotulo = rotuloProdutosProducao(p);
+    const key = `${rotulo.toLowerCase()}|${perda.unidade.toLowerCase()}`;
     const existing = map.get(key);
 
     if (existing) {
@@ -416,7 +561,7 @@ export function totalizarPerdasPorProduto(producoes: Producao[]): TotalPerdaProd
       });
     } else {
       map.set(key, {
-        produto: p.produto,
+        produto: rotulo,
         unidade: perda.unidade,
         lancamentos: 1,
         entradaTotal: perda.entrada,
@@ -431,12 +576,46 @@ export function totalizarPerdasPorProduto(producoes: Producao[]): TotalPerdaProd
 }
 
 export function catalogoProdutosProduzidos(producoes: Producao[], estoque: EstoqueItem[]): SaldoEstoque[] {
-  const nomes = new Set<string>();
-  for (const p of producoes) {
-    const nome = p.produto.trim();
-    if (nome) nomes.add(nome.toLowerCase());
-  }
+  const nomes = nomesProdutosGerados(producoes);
   return agruparEstoque(estoque)
     .filter((s) => nomes.has(s.nome.toLowerCase()) && s.quantidade > 0)
     .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+}
+
+/** Custo unitário da última produção que gerou o produto (considera multi-saída). */
+export function custoUltimaProducaoDoProduto(
+  producoes: Producao[],
+  produto: string
+): { custoUnitario: number; unidade: string } | null {
+  const key = produto.trim().toLowerCase();
+  if (!key) return null;
+
+  const candidatas = producoes
+    .map((p) => {
+      const prod = produtosDaProducao(p).find((x) => x.nome.toLowerCase() === key);
+      if (!prod || prod.quantidade <= 0) return null;
+      const custo =
+        prod.custoAlocado !== undefined && prod.custoAlocado !== null
+          ? prod.custoAlocado
+          : (() => {
+              const saida = totalSaidaProdutos(produtosDaProducao(p));
+              if (!saida || saida.total <= 0) return 0;
+              return (p.custoEstimado * prod.quantidade) / saida.total;
+            })();
+      return {
+        data: p.data,
+        id: p.id,
+        custoUnitario: prod.quantidade > 0 ? custo / prod.quantidade : 0,
+        unidade: prod.unidade || 'kg',
+      };
+    })
+    .filter((x): x is NonNullable<typeof x> => x !== null)
+    .sort((a, b) => b.data.localeCompare(a.data) || b.id - a.id);
+
+  const ultima = candidatas[0];
+  if (!ultima) return null;
+  return {
+    custoUnitario: Math.round(ultima.custoUnitario * 100) / 100,
+    unidade: ultima.unidade,
+  };
 }

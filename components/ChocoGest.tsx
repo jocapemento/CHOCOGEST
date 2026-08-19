@@ -10,28 +10,47 @@ import type {
   ItemMovimentacao,
   MovimentoFinanceiro,
   PatrimonioItem,
+  OrigemQuitacaoCartao,
   PrecoGerado,
   Producao,
+  ProdutoGeradoProducao,
+  QuitacaoCartao,
   TipoItem,
   StatusVenda,
   Venda,
 } from '@/lib/types';
-import { EMPTY_DATA, TIPOS_ITEM } from '@/lib/types';
+import { EMPTY_DATA, TIPOS_ITEM, TIPOS_ITEM_LABEL } from '@/lib/types';
 import { loadAppData, saveAppData, exportBackup, parseBackupFile } from '@/lib/storage';
 import {
-  calcularParcelasMensais,
+  arredondarDinheiro,
+  calcularParcelasEmAberto,
+  cartoesParaExibicao,
+  isPagamentoCartao,
+  listarEmprestimosCartao,
   mesesComParcelas,
+  nomesCartaoIguais,
+  referenciaQuitacao,
+  resolverCartaoPorId,
+  saldoDevedorCartao,
+  STATUS_EMPRESTIMO_LABEL,
+  totalEmprestadoCartao,
+  totalQuitadoCartao,
+  totalQuitadoCompra,
   totalParcelasCartao,
   totalParcelasMes,
   valorParcelaNoMes,
 } from '@/lib/cartoes';
 import {
-  CADEIA_PRODUCAO_CACAU,
+  coprodutosSugeridosParaIngredientes,
+  ehProdutoGeradoCadeia,
   ingredientesSugeridosPara,
+  preencherProdutosComCoprodutos,
   produtosDaCadeia,
+  tipoEstoqueCadeia,
 } from '@/lib/cadeia-producao';
 import {
   agruparEstoque,
+  alocarCustoEntreProdutos,
   baixarEstoqueFifo,
   calcularPerdaProducao,
   catalogoItensLancados,
@@ -42,8 +61,11 @@ import {
   filtrarSaldoMateriaPrima,
   filtrarSaldoProdutosGerados,
   ingredientesProducaoDisponiveis,
+  montarProducaoComProdutos,
+  produtosDaProducao,
   quantidadeDisponivel,
   resolverTipoIngredienteProducao,
+  rotuloProdutosProducao,
   saldoIngrediente,
   saldoIngredienteProducao,
   totalEntradaIngredientes,
@@ -174,7 +196,7 @@ function atualizarEstoqueCompra(
     updated.push({
       id: nextId(updated),
       nome: item.nome,
-      tipo: item.tipo,
+      tipo: tipoEstoqueCadeia(item.nome, item.tipo),
       quantidade: item.quantidade,
       unidade: item.unidade,
       valorUnit: item.valorUnit,
@@ -203,6 +225,45 @@ function removerMovimentosCompra(
   return {
     movCaixa: movCaixa.filter((m) => m.referencia !== ref),
     movBanco: movBanco.filter((m) => m.referencia !== ref),
+  };
+}
+
+function reverterEfeitosQuitacao(prev: AppData, quitacaoId: number): AppData {
+  const ref = referenciaQuitacao(quitacaoId);
+  return {
+    ...prev,
+    movimentosCaixa: prev.movimentosCaixa.filter((m) => m.referencia !== ref),
+    movimentosBanco: prev.movimentosBanco.filter((m) => m.referencia !== ref),
+  };
+}
+
+function aplicarEfeitosQuitacao(prev: AppData, quitacao: QuitacaoCartao): AppData {
+  const descricao =
+    quitacao.descricao?.trim() || `Quitação cartão ${quitacao.cartao}`;
+  const mov = {
+    data: quitacao.data,
+    descricao,
+    tipo: 'saida' as const,
+    valor: quitacao.valor,
+    categoria: 'Quitação cartão',
+    referencia: referenciaQuitacao(quitacao.id),
+    banco: quitacao.origem === 'banco' ? quitacao.banco : undefined,
+  };
+  if (quitacao.origem === 'caixa') {
+    return { ...prev, movimentosCaixa: registrarMovimento(prev.movimentosCaixa, mov) };
+  }
+  return { ...prev, movimentosBanco: registrarMovimento(prev.movimentosBanco, mov) };
+}
+
+function removerQuitacoesDaCompra(prev: AppData, compraId: number): AppData {
+  const quits = prev.quitacoesCartao.filter((q) => q.compraId === compraId);
+  let state = prev;
+  for (const q of quits) {
+    state = reverterEfeitosQuitacao(state, q.id);
+  }
+  return {
+    ...state,
+    quitacoesCartao: state.quitacoesCartao.filter((q) => q.compraId !== compraId),
   };
 }
 
@@ -266,6 +327,15 @@ const COMPRA_FORM_INICIAL = {
   cartaoId: 1,
   parcelas: 1,
   itens: [] as ItemMovimentacao[],
+};
+
+const QUITACAO_FORM_INICIAL = {
+  data: todayISO(),
+  compraId: 0,
+  valor: 0,
+  origem: 'banco' as OrigemQuitacaoCartao,
+  banco: '',
+  descricao: '',
 };
 
 function removerMovimentosVenda(
@@ -350,17 +420,16 @@ function ingredientesProducaoParaItens(
   });
 }
 
-function produtoProducaoParaItem(producao: Producao): ItemMovimentacao {
-  const custoUnit =
-    producao.quantidade > 0 ? producao.custoEstimado / producao.quantidade : producao.custoEstimado;
-  return {
+function produtosProducaoParaItens(producao: Producao): ItemMovimentacao[] {
+  const produtos = alocarCustoEntreProdutos(producao.custoEstimado, produtosDaProducao(producao));
+  return produtos.map((p) => ({
     id: 0,
-    nome: producao.produto,
-    tipo: 'ProdutoAcabado',
-    quantidade: producao.quantidade,
-    unidade: producao.unidade,
-    valorUnit: custoUnit,
-  };
+    nome: p.nome,
+    tipo: tipoEstoqueCadeia(p.nome),
+    quantidade: p.quantidade,
+    unidade: p.unidade,
+    valorUnit: p.quantidade > 0 ? (p.custoAlocado ?? 0) / p.quantidade : 0,
+  }));
 }
 
 function aplicarEfeitosProducao(
@@ -372,7 +441,7 @@ function aplicarEfeitosProducao(
   for (const item of ingredientesProducaoParaItens(updated, producao.ingredientes, producoes)) {
     updated = baixarEstoqueFifo(updated, [item]);
   }
-  return atualizarEstoqueCompra(updated, [produtoProducaoParaItem(producao)], producao.data);
+  return atualizarEstoqueCompra(updated, produtosProducaoParaItens(producao), producao.data);
 }
 
 function reverterEfeitosProducao(
@@ -380,7 +449,10 @@ function reverterEfeitosProducao(
   producao: Producao,
   producoes: Producao[]
 ): EstoqueItem[] {
-  const updated = baixarEstoqueFifo(estoque, [produtoProducaoParaItem(producao)]);
+  let updated = estoque;
+  for (const item of produtosProducaoParaItens(producao)) {
+    updated = baixarEstoqueFifo(updated, [item]);
+  }
   return atualizarEstoqueCompra(
     updated,
     ingredientesProducaoParaItens(updated, producao.ingredientes, producoes),
@@ -389,7 +461,9 @@ function reverterEfeitosProducao(
 }
 
 function podeReverterProducao(estoque: EstoqueItem[], producao: Producao): boolean {
-  return quantidadeDisponivel(estoque, producao.produto) >= producao.quantidade;
+  return produtosDaProducao(producao).every(
+    (p) => quantidadeDisponivel(estoque, p.nome) >= p.quantidade
+  );
 }
 
 function formatarMensagemBloqueioProducao(
@@ -398,25 +472,31 @@ function formatarMensagemBloqueioProducao(
   vendas: Venda[],
   acao: 'excluir' | 'editar'
 ): string {
-  const disponivel = quantidadeDisponivel(estoque, producao.produto);
-  const vendasRelacionadas = vendasDoProduto(vendas, producao.produto);
-  const totalVendido = totalVendidoProduto(vendas, producao.produto);
-  const faltam = Math.max(0, producao.quantidade - disponivel);
-
+  const produtos = produtosDaProducao(producao);
   const linhas = [
-    `Não é possível ${acao} esta produção: o estoque de "${producao.produto}" não cobre a reversão.`,
+    `Não é possível ${acao} esta produção: o estoque não cobre a reversão.`,
     '',
-    `• Nesta produção: ${producao.quantidade} ${producao.unidade}`,
-    `• Disponível no estoque: ${disponivel}`,
-    `• Faltam para desfazer: ${faltam}`,
   ];
 
-  if (totalVendido > 0) {
-    linhas.push(`• Total vendido: ${totalVendido}`);
+  let temVenda = false;
+  for (const prod of produtos) {
+    const disponivel = quantidadeDisponivel(estoque, prod.nome);
+    const faltam = Math.max(0, prod.quantidade - disponivel);
+    linhas.push(
+      `• ${prod.nome}: nesta produção ${prod.quantidade} ${prod.unidade} · disponível ${disponivel}` +
+        (faltam > 0 ? ` · faltam ${faltam}` : '')
+    );
+
+    const totalVendido = totalVendidoProduto(vendas, prod.nome);
+    if (totalVendido > 0) {
+      linhas.push(`  vendido: ${totalVendido}`);
+      temVenda = true;
+    }
   }
 
+  const vendasRelacionadas = produtos.flatMap((prod) => vendasDoProduto(vendas, prod.nome));
   if (vendasRelacionadas.length > 0) {
-    linhas.push('', 'Vendas que consumiram este produto:');
+    linhas.push('', 'Vendas que consumiram estes produtos:');
     for (const v of vendasRelacionadas.slice(0, 6)) {
       linhas.push(
         `  — Venda #${v.vendaId} (${formatDate(v.data)}): ${v.quantidade} un. — ${v.cliente}`
@@ -426,10 +506,10 @@ function formatarMensagemBloqueioProducao(
       linhas.push(`  … e mais ${vendasRelacionadas.length - 6} venda(s).`);
     }
     linhas.push('', 'Para desfazer completamente, exclua ou edite essas vendas em Vendas primeiro.');
-  } else if (disponivel < producao.quantidade) {
+  } else if (!temVenda) {
     linhas.push(
       '',
-      'Não há vendas registradas deste produto. Verifique outras produções do mesmo nome ou lançamentos no estoque.'
+      'Não há vendas registradas destes produtos. Verifique outras produções do mesmo nome ou lançamentos no estoque.'
     );
   }
 
@@ -460,12 +540,12 @@ const ITEM_ESTOQUE_FORM_INICIAL = {
   data: todayISO(),
 };
 
+const PRODUTO_SAIDA_INICIAL: ProdutoGeradoProducao = { nome: '', quantidade: 0, unidade: 'kg' };
+
 const PRODUCAO_FORM_INICIAL = {
   data: todayISO(),
   lote: '',
-  produto: '',
-  quantidade: 0,
-  unidade: 'kg',
+  produtos: [{ ...PRODUTO_SAIDA_INICIAL }] as ProdutoGeradoProducao[],
   ingredientes: [] as Array<{
     nome: string;
     quantidade: number;
@@ -476,8 +556,13 @@ const PRODUCAO_FORM_INICIAL = {
 };
 
 function unidadeSugeridaProduto(producoes: Producao[], nome: string): string | undefined {
-  const registro = producoes.find((p) => p.produto.toLowerCase() === nome.toLowerCase());
-  return registro?.unidade;
+  const key = nome.trim().toLowerCase();
+  if (!key) return undefined;
+  for (const p of [...producoes].sort((a, b) => b.data.localeCompare(a.data) || b.id - a.id)) {
+    const prod = produtosDaProducao(p).find((x) => x.nome.toLowerCase() === key);
+    if (prod?.unidade) return prod.unidade;
+  }
+  return undefined;
 }
 
 const MOV_CAIXA_FORM_INICIAL = {
@@ -602,6 +687,7 @@ export default function ChocoGest() {
   const [ingredienteForm, setIngredienteForm] = useState({ nome: '', quantidade: 0, valorUnit: 0 });
   const [novoCartao, setNovoCartao] = useState({ nome: '', limite: 0 });
   const [cotacaoDolar, setCotacaoDolar] = useState(0);
+  const [novaQuitacao, setNovaQuitacao] = useState({ ...QUITACAO_FORM_INICIAL });
   const [novoPatrimonio, setNovoPatrimonio] = useState({
     nome: '',
     categoria: 'Equipamento',
@@ -638,9 +724,9 @@ export default function ChocoGest() {
     () =>
       calcularPerdaProducao({
         ingredientes: novaProducao.ingredientes,
-        quantidade: novaProducao.quantidade,
+        produtos: novaProducao.produtos,
       }),
-    [novaProducao.ingredientes, novaProducao.quantidade]
+    [novaProducao.ingredientes, novaProducao.produtos]
   );
 
   const catalogoProdutosProducao = useMemo(() => {
@@ -669,16 +755,44 @@ export default function ChocoGest() {
     () => catalogoItensLancados(data.compras, data.estoque),
     [data.compras, data.estoque]
   );
-  const parcelasMensais = useMemo(() => calcularParcelasMensais(data.compras), [data.compras]);
+  const emprestimosCartao = useMemo(
+    () => listarEmprestimosCartao(data.compras, data.quitacoesCartao, data.cartoes),
+    [data.compras, data.quitacoesCartao, data.cartoes]
+  );
+  const parcelasMensais = useMemo(
+    () => calcularParcelasEmAberto(data.compras, data.quitacoesCartao, data.cartoes),
+    [data.compras, data.quitacoesCartao, data.cartoes]
+  );
   const mesesParcelas = useMemo(() => mesesComParcelas(parcelasMensais), [parcelasMensais]);
+  const cartoesExibicao = useMemo(
+    () => cartoesParaExibicao(data.cartoes, parcelasMensais),
+    [data.cartoes, parcelasMensais]
+  );
+  const emprestimosAbertos = useMemo(
+    () => emprestimosCartao.filter((e) => e.status !== 'quitado'),
+    [emprestimosCartao]
+  );
+  const quitacoesOrdenadas = useMemo(
+    () =>
+      [...data.quitacoesCartao].sort(
+        (a, b) => b.data.localeCompare(a.data) || b.id - a.id
+      ),
+    [data.quitacoesCartao]
+  );
   const mesAtual = mesAtualISO();
   const ingredientesDisponiveis = useMemo(
     () => ingredientesProducaoDisponiveis(data.estoque, data.producoes),
     [data.estoque, data.producoes]
   );
+  const primeiroProdutoNome =
+    novaProducao.produtos.find((p) => p.nome.trim())?.nome.trim() ?? '';
   const ingredientesSugeridos = useMemo(
-    () => ingredientesSugeridosPara(novaProducao.produto),
-    [novaProducao.produto]
+    () => ingredientesSugeridosPara(primeiroProdutoNome),
+    [primeiroProdutoNome]
+  );
+  const coprodutosDoLote = useMemo(
+    () => coprodutosSugeridosParaIngredientes(novaProducao.ingredientes.map((i) => i.nome)),
+    [novaProducao.ingredientes]
   );
 
   // --- Handlers ---
@@ -710,6 +824,8 @@ export default function ChocoGest() {
 
     const dataOperacao = normalizeDateISO(novoItem.data);
     const editando = estoqueEditandoId !== null;
+    const nome = novoItem.nome.trim();
+    const tipo = tipoEstoqueCadeia(nome, novoItem.tipo);
 
     update((prev) => {
       if (editando) {
@@ -719,8 +835,8 @@ export default function ChocoGest() {
             e.id === estoqueEditandoId
               ? {
                   ...e,
-                  nome: novoItem.nome.trim(),
-                  tipo: novoItem.tipo,
+                  nome,
+                  tipo,
                   quantidade: novoItem.quantidade,
                   unidade: novoItem.unidade,
                   valorUnit: novoItem.valorUnit,
@@ -735,7 +851,13 @@ export default function ChocoGest() {
         ...prev,
         estoque: [
           ...prev.estoque,
-          { id: nextId(prev.estoque), ...novoItem, nome: novoItem.nome.trim(), data: dataOperacao },
+          {
+            id: nextId(prev.estoque),
+            ...novoItem,
+            nome,
+            tipo,
+            data: dataOperacao,
+          },
         ],
       };
     });
@@ -757,14 +879,18 @@ export default function ChocoGest() {
     if (item) {
       setItemCompra({
         nome: item.nome,
-        tipo: item.tipo,
+        tipo: tipoEstoqueCadeia(item.nome, item.tipo),
         quantidade: itemCompra.quantidade || 1,
         unidade: item.unidade,
         valorUnit: item.valorUnit,
       });
       return;
     }
-    setItemCompra({ ...itemCompra, nome });
+    setItemCompra({
+      ...itemCompra,
+      nome,
+      tipo: tipoEstoqueCadeia(nome, itemCompra.tipo),
+    });
   };
 
   const adicionarItemCompra = () => {
@@ -772,9 +898,12 @@ export default function ChocoGest() {
       return alert('Informe o nome do item antes de adicionar.');
     }
     setNovaCompra((p) => {
+      const nome = itemCompra.nome.trim();
       const item: ItemMovimentacao = {
         id: nextId(p.itens),
         ...itemCompra,
+        nome,
+        tipo: tipoEstoqueCadeia(nome, itemCompra.tipo),
       };
       return { ...p, itens: [...p.itens, item] };
     });
@@ -786,7 +915,11 @@ export default function ChocoGest() {
   };
 
   const resetFormCompra = () => {
-    setNovaCompra({ ...COMPRA_FORM_INICIAL, data: todayISO() });
+    setNovaCompra({
+      ...COMPRA_FORM_INICIAL,
+      data: todayISO(),
+      cartaoId: data.cartoes[0]?.id ?? COMPRA_FORM_INICIAL.cartaoId,
+    });
     setItemCompra({ nome: '', tipo: 'MateriaPrima', quantidade: 1, unidade: 'kg', valorUnit: 0 });
     setCompraEditandoId(null);
   };
@@ -796,7 +929,9 @@ export default function ChocoGest() {
   };
 
   const editarCompra = (compra: Compra) => {
-    const cartao = data.cartoes.find((c) => c.nome === compra.cartao);
+    const cartao =
+      data.cartoes.find((c) => nomesCartaoIguais(c.nome, compra.cartao)) ??
+      resolverCartaoPorId(data.cartoes, novaCompra.cartaoId);
     setNovaCompra({
       data: normalizeDateISO(compra.data),
       fornecedor: compra.fornecedor,
@@ -812,7 +947,7 @@ export default function ChocoGest() {
   const removerCompra = (id: number) => {
     if (
       !confirm(
-        'Remover este lançamento de compra? O estoque, patrimônio e movimentos financeiros serão ajustados.'
+        'Remover este lançamento de compra? O estoque, patrimônio, quitações do cartão e movimentos financeiros serão ajustados.'
       )
     ) {
       return;
@@ -821,7 +956,8 @@ export default function ChocoGest() {
     update((prev) => {
       const compra = prev.compras.find((c) => c.id === id);
       if (!compra) return prev;
-      const reverted = reverterEfeitosCompra(prev, compra);
+      let reverted = reverterEfeitosCompra(prev, compra);
+      reverted = removerQuitacoesDaCompra(reverted, compra.id);
       return { ...reverted, compras: reverted.compras.filter((c) => c.id !== id) };
     });
 
@@ -859,10 +995,19 @@ export default function ChocoGest() {
 
   const registrarCompra = () => {
     const fornecedor = novaCompra.fornecedor.trim();
-    const itens: ItemMovimentacao[] = [...novaCompra.itens];
+    const itens: ItemMovimentacao[] = novaCompra.itens.map((i) => ({
+      ...i,
+      tipo: tipoEstoqueCadeia(i.nome, i.tipo),
+    }));
 
     if (itemCompra.nome.trim()) {
-      itens.push({ id: nextId(itens), ...itemCompra });
+      const nome = itemCompra.nome.trim();
+      itens.push({
+        id: nextId(itens),
+        ...itemCompra,
+        nome,
+        tipo: tipoEstoqueCadeia(nome, itemCompra.tipo),
+      });
     }
 
     if (!fornecedor) {
@@ -875,20 +1020,37 @@ export default function ChocoGest() {
     }
 
     const total = sumBy(itens, (i) => i.quantidade * i.valorUnit);
-    const cartao = data.cartoes.find((c) => c.id === novaCompra.cartaoId);
+    const pagamentoCartao = isPagamentoCartao(novaCompra.formaPagamento);
+    if (pagamentoCartao && data.cartoes.length === 0) {
+      return alert('Cadastre um cartão na aba Cartões antes de registrar a compra no cartão.');
+    }
+    const cartao = pagamentoCartao ? resolverCartaoPorId(data.cartoes, novaCompra.cartaoId) : undefined;
+    if (pagamentoCartao && !cartao) {
+      return alert('Selecione o cartão usado nesta compra.');
+    }
     const dataOperacao = normalizeDateISO(novaCompra.data);
     const editando = compraEditandoId !== null;
+    const parcelas = pagamentoCartao ? Math.max(1, Math.floor(Number(novaCompra.parcelas)) || 1) : 1;
 
     const compra: Compra = {
       id: editando ? compraEditandoId : nextId(data.compras),
       data: dataOperacao,
       fornecedor,
       formaPagamento: novaCompra.formaPagamento,
-      cartao: novaCompra.formaPagamento === 'Cartao' ? (cartao?.nome ?? null) : null,
-      parcelas: novaCompra.parcelas,
+      cartao: pagamentoCartao ? (cartao?.nome ?? null) : null,
+      parcelas,
       total,
       itens,
     };
+
+    if (editando && pagamentoCartao) {
+      const jaQuitado = totalQuitadoCompra(data.quitacoesCartao, compra.id);
+      if (jaQuitado > arredondarDinheiro(total) + 0.009) {
+        return alert(
+          `Não é possível reduzir o total abaixo do já quitado (${formatCurrency(jaQuitado)}). Estorne quitações na aba Cartões.`
+        );
+      }
+    }
 
     update((prev) => {
       if (editando) {
@@ -896,6 +1058,9 @@ export default function ChocoGest() {
         if (!antiga) return prev;
 
         let state = reverterEfeitosCompra(prev, antiga);
+        if (isPagamentoCartao(antiga.formaPagamento) && !pagamentoCartao) {
+          state = removerQuitacoesDaCompra(state, antiga.id);
+        }
         state = aplicarEfeitosCompra(state, compra, dataOperacao);
 
         return {
@@ -914,9 +1079,11 @@ export default function ChocoGest() {
     alert(
       editando
         ? 'Compra atualizada com sucesso!'
-        : qtdEquipamento > 0
-          ? `Compra registrada! ${qtdEquipamento} equipamento(s) adicionado(s) ao Patrimônio.`
-          : 'Compra registrada com sucesso!'
+        : pagamentoCartao
+          ? 'Compra lançada como empréstimo no cartão. Registre a quitação na aba Cartões quando pagar a fatura.'
+          : qtdEquipamento > 0
+            ? `Compra registrada! ${qtdEquipamento} equipamento(s) adicionado(s) ao Patrimônio.`
+            : 'Compra registrada com sucesso!'
     );
   };
 
@@ -1143,14 +1310,18 @@ export default function ChocoGest() {
         `Quantidade indisponível. Saldo de "${item.nome}": ${item.quantidade} ${item.unidade}.`
       );
     }
-    setNovaProducao((p) => ({
-      ...p,
-      ingredientes: [
+    setNovaProducao((p) => {
+      const ingredientes = [
         ...p.ingredientes,
         { ...ingredienteForm, unidade: item.unidade, tipo: item.tipo },
-      ],
-      unidade: p.ingredientes.length === 0 ? item.unidade : p.unidade,
-    }));
+      ];
+      const unidade = p.ingredientes.length === 0 ? item.unidade : (p.produtos[0]?.unidade || item.unidade);
+      return {
+        ...p,
+        ingredientes,
+        produtos: preencherProdutosComCoprodutos(p.produtos, ingredientes.map((i) => i.nome), unidade),
+      };
+    });
     setIngredienteForm({ nome: '', quantidade: 0, valorUnit: 0 });
   };
 
@@ -1158,6 +1329,33 @@ export default function ChocoGest() {
     setNovaProducao((p) => ({
       ...p,
       ingredientes: p.ingredientes.filter((_, i) => i !== idx),
+    }));
+  };
+
+  const atualizarProdutoSaida = (idx: number, patch: Partial<ProdutoGeradoProducao>) => {
+    setNovaProducao((p) => ({
+      ...p,
+      produtos: p.produtos.map((prod, i) => (i === idx ? { ...prod, ...patch } : prod)),
+    }));
+  };
+
+  const adicionarProdutoSaida = () => {
+    setNovaProducao((p) => ({
+      ...p,
+      produtos: [
+        ...p.produtos,
+        {
+          ...PRODUTO_SAIDA_INICIAL,
+          unidade: p.produtos[0]?.unidade || p.ingredientes[0]?.unidade || 'kg',
+        },
+      ],
+    }));
+  };
+
+  const removerProdutoSaida = (idx: number) => {
+    setNovaProducao((p) => ({
+      ...p,
+      produtos: p.produtos.length <= 1 ? [{ ...PRODUTO_SAIDA_INICIAL }] : p.produtos.filter((_, i) => i !== idx),
     }));
   };
 
@@ -1172,12 +1370,11 @@ export default function ChocoGest() {
   };
 
   const editarProducao = (producao: Producao) => {
+    const produtos = produtosDaProducao(producao);
     setNovaProducao({
       data: normalizeDateISO(producao.data),
       lote: producao.lote,
-      produto: producao.produto,
-      quantidade: producao.quantidade,
-      unidade: producao.unidade,
+      produtos: produtos.length > 0 ? produtos.map((p) => ({ ...p })) : [{ ...PRODUTO_SAIDA_INICIAL }],
       ingredientes: producao.ingredientes.map((i) => {
         const tipo = resolverTipoIngredienteProducao(i, data.producoes);
         const saldo = saldoIngredienteProducao(data.estoque, i.nome, data.producoes, tipo);
@@ -1215,7 +1412,7 @@ export default function ChocoGest() {
 
     if (
       !confirm(
-        'Remover este lançamento de produção? Os ingredientes serão devolvidos ao estoque e o produto acabado será removido.'
+        'Remover este lançamento de produção? Os ingredientes serão devolvidos ao estoque e os produtos gerados serão removidos.'
       )
     ) {
       return;
@@ -1237,50 +1434,88 @@ export default function ChocoGest() {
   };
 
   const registrarProducao = () => {
-    if (!novaProducao.produto.trim() || novaProducao.ingredientes.length === 0) {
-      return alert('Preencha produto e ingredientes.');
+    if (novaProducao.ingredientes.length === 0) {
+      return alert('Preencha os ingredientes.');
     }
-    if (novaProducao.quantidade <= 0) {
-      return alert('Informe a quantidade do produto gerado.');
+
+    const produtosPreenchidos = novaProducao.produtos
+      .map((p) => ({
+        nome: p.nome.trim(),
+        quantidade: Number(p.quantidade) || 0,
+        unidade: (p.unidade || 'kg').trim() || 'kg',
+      }))
+      .filter((p) => p.nome.length > 0);
+
+    if (produtosPreenchidos.length === 0) {
+      return alert('Informe pelo menos um produto gerado.');
+    }
+    if (produtosPreenchidos.some((p) => p.quantidade <= 0)) {
+      return alert('Informe a quantidade de cada produto gerado.');
+    }
+
+    const nomesSaida = new Set<string>();
+    for (const p of produtosPreenchidos) {
+      const key = p.nome.toLowerCase();
+      if (nomesSaida.has(key)) {
+        return alert(`O produto "${p.nome}" está duplicado neste lote.`);
+      }
+      nomesSaida.add(key);
+    }
+
+    const editando = producaoEditandoId !== null;
+    const coprodutos = coprodutosSugeridosParaIngredientes(
+      novaProducao.ingredientes.map((i) => i.nome)
+    );
+    if (!editando && coprodutos.length >= 2) {
+      if (produtosPreenchidos.length < 2) {
+        return alert(
+          `A quebra da Amêndoa Torrada gera mais de um produto (${coprodutos.join(' e ')}). Informe a quantidade de cada um.`
+        );
+      }
+      const faltando = coprodutos.filter(
+        (nome) => !nomesSaida.has(nome.toLowerCase())
+      );
+      if (faltando.length > 0) {
+        return alert(`Informe também a quantidade de: ${faltando.join(', ')}.`);
+      }
     }
 
     const perdaCalculada = calcularPerdaProducao({
       ingredientes: novaProducao.ingredientes,
-      quantidade: novaProducao.quantidade,
+      produtos: produtosPreenchidos,
     });
     if (!perdaCalculada) {
       return alert(
-        'Não foi possível calcular a perda. Lance a matéria-prima e use a mesma unidade em todos os ingredientes.'
+        'Não foi possível calcular a perda. Use a mesma unidade na matéria-prima e em todos os produtos gerados.'
       );
     }
-    if (novaProducao.quantidade > perdaCalculada.entrada) {
+    if (perdaCalculada.saida > perdaCalculada.entrada) {
       return alert(
-        `A quantidade produzida (${novaProducao.quantidade} ${perdaCalculada.unidade}) não pode ser maior que a matéria-prima lançada (${perdaCalculada.entrada} ${perdaCalculada.unidade}).`
+        `A quantidade produzida (${perdaCalculada.saida} ${perdaCalculada.unidade}) não pode ser maior que a matéria-prima lançada (${perdaCalculada.entrada} ${perdaCalculada.unidade}).`
       );
     }
-    if (novaProducao.unidade.trim().toLowerCase() !== perdaCalculada.unidade.toLowerCase()) {
-      return alert(
-        `A unidade do produto ("${novaProducao.unidade}") deve ser a mesma da matéria-prima ("${perdaCalculada.unidade}").`
-      );
+    for (const p of produtosPreenchidos) {
+      if (p.unidade.toLowerCase() !== perdaCalculada.unidade.toLowerCase()) {
+        return alert(
+          `A unidade de "${p.nome}" ("${p.unidade}") deve ser a mesma da matéria-prima ("${perdaCalculada.unidade}").`
+        );
+      }
     }
 
     const custoEstimado = sumBy(
       novaProducao.ingredientes,
       (i) => i.quantidade * i.valorUnit
     );
-    const editando = producaoEditandoId !== null;
-    const producao: Producao = {
-      id: editando ? producaoEditandoId : nextId(data.producoes),
+    const producao = montarProducaoComProdutos({
+      id: editando && producaoEditandoId != null ? producaoEditandoId : nextId(data.producoes),
       data: normalizeDateISO(novaProducao.data),
       lote: novaProducao.lote || `L${Date.now()}`,
-      produto: novaProducao.produto,
-      quantidade: novaProducao.quantidade,
-      unidade: novaProducao.unidade,
+      produtos: produtosPreenchidos,
       ingredientes: novaProducao.ingredientes,
       custoEstimado,
       quantidadePerdida: perdaCalculada.perdaQuantidade,
       percentualPerda: perdaCalculada.perdaPercentual,
-    };
+    });
 
     if (editando) {
       const antiga = data.producoes.find((p) => p.id === producaoEditandoId);
@@ -1298,14 +1533,16 @@ export default function ChocoGest() {
     const erroIngredientes = validarIngredientesProducao(estoqueBase, producao, data.producoes);
     if (erroIngredientes) return alert(erroIngredientes);
 
-    const saldoProduto = saldoIngrediente(estoqueBase, producao.produto);
-    if (
-      saldoProduto &&
-      saldoProduto.unidade.toLowerCase() !== producao.unidade.trim().toLowerCase()
-    ) {
-      return alert(
-        `Unidade "${producao.unidade}" não confere com o estoque existente de "${producao.produto}" (${saldoProduto.unidade}).`
-      );
+    for (const prod of produtosDaProducao(producao)) {
+      const saldoProduto = saldoIngrediente(estoqueBase, prod.nome);
+      if (
+        saldoProduto &&
+        saldoProduto.unidade.toLowerCase() !== prod.unidade.trim().toLowerCase()
+      ) {
+        return alert(
+          `Unidade "${prod.unidade}" não confere com o estoque existente de "${prod.nome}" (${saldoProduto.unidade}).`
+        );
+      }
     }
 
     update((prev) => {
@@ -1348,6 +1585,89 @@ export default function ChocoGest() {
   const removerCartao = (id: number) => {
     if (!confirm('Remover cartão?')) return;
     update((prev) => ({ ...prev, cartoes: prev.cartoes.filter((c) => c.id !== id) }));
+  };
+
+  const selecionarEmprestimoQuitacao = (compraId: number, saldo: number, valorParcela: number) => {
+    const sugerido = valorParcela > 0 && valorParcela < saldo ? valorParcela : saldo;
+    setNovaQuitacao((p) => ({
+      ...p,
+      compraId,
+      valor: arredondarDinheiro(sugerido),
+    }));
+  };
+
+  const registrarQuitacao = () => {
+    const emprestimo = emprestimosCartao.find((e) => e.compraId === novaQuitacao.compraId);
+    if (!emprestimo) {
+      return alert('Selecione o empréstimo (compra no cartão) a quitar.');
+    }
+    if (emprestimo.status === 'quitado') {
+      return alert('Este empréstimo já está quitado.');
+    }
+    const valor = arredondarDinheiro(novaQuitacao.valor);
+    if (valor <= 0) {
+      return alert('Informe o valor da quitação.');
+    }
+    if (valor > emprestimo.saldo + 0.009) {
+      return alert(
+        `Valor maior que o saldo do empréstimo (${formatCurrency(emprestimo.saldo)}).`
+      );
+    }
+    if (novaQuitacao.origem === 'banco' && data.bancos.length === 0) {
+      return alert('Cadastre um banco na aba Banco ou quite pelo Caixa.');
+    }
+
+    const bancoNome =
+      novaQuitacao.origem === 'banco'
+        ? (novaQuitacao.banco.trim() || data.bancos[0]?.nome || '')
+        : undefined;
+    if (novaQuitacao.origem === 'banco' && !bancoNome) {
+      return alert('Selecione o banco da quitação.');
+    }
+
+    const quitacao: QuitacaoCartao = {
+      id: nextId(data.quitacoesCartao),
+      data: normalizeDateISO(novaQuitacao.data),
+      cartao: emprestimo.cartao,
+      compraId: emprestimo.compraId,
+      valor,
+      origem: novaQuitacao.origem,
+      banco: bancoNome,
+      descricao:
+        novaQuitacao.descricao.trim() ||
+        `Quitação ${emprestimo.cartao} — ${emprestimo.fornecedor}`,
+    };
+
+    update((prev) => {
+      const state = aplicarEfeitosQuitacao(prev, quitacao);
+      return {
+        ...state,
+        quitacoesCartao: [...state.quitacoesCartao, quitacao],
+      };
+    });
+
+    setNovaQuitacao({
+      ...QUITACAO_FORM_INICIAL,
+      data: todayISO(),
+      origem: novaQuitacao.origem,
+      banco: bancoNome ?? '',
+    });
+    alert('Quitação registrada. O valor saiu do ' + (quitacao.origem === 'caixa' ? 'Caixa' : 'Banco') + '.');
+  };
+
+  const removerQuitacao = (id: number) => {
+    if (!confirm('Estornar esta quitação? O valor volta para o empréstimo e o movimento financeiro é removido.')) {
+      return;
+    }
+    update((prev) => {
+      const atual = prev.quitacoesCartao.find((q) => q.id === id);
+      if (!atual) return prev;
+      const state = reverterEfeitosQuitacao(prev, id);
+      return {
+        ...state,
+        quitacoesCartao: state.quitacoesCartao.filter((q) => q.id !== id),
+      };
+    });
   };
 
   const adicionarPatrimonio = () => {
@@ -1979,7 +2299,7 @@ export default function ChocoGest() {
                   <h3 className="font-semibold text-amber-200 mb-3">Últimas Produções</h3>
                   {data.producoes.slice(-5).reverse().map((p) => (
                     <div key={p.id} className="flex justify-between py-2 border-b border-amber-800/30 text-sm">
-                      <span>{formatDate(p.data)} — {p.produto} ({p.lote})</span>
+                      <span>{formatDate(p.data)} — {rotuloProdutosProducao(p)} ({p.lote})</span>
                       <span className="text-amber-300">{formatCurrency(p.custoEstimado)}</span>
                     </div>
                   ))}
@@ -2011,12 +2331,38 @@ export default function ChocoGest() {
                     onChange={(data) => setNovoItem((p) => ({ ...p, data }))}
                   />
                   <Field label="Nome">
-                    <input className={inputCls} value={novoItem.nome} onChange={(e) => setNovoItem((p) => ({ ...p, nome: e.target.value }))} />
+                    <input
+                      list="itens-estoque-cadastrados"
+                      className={inputCls}
+                      value={novoItem.nome}
+                      onChange={(e) => {
+                        const nome = e.target.value;
+                        const cat = catalogoItensCompra.find(
+                          (i) => i.nome.toLowerCase() === nome.toLowerCase()
+                        );
+                        setNovoItem((p) => ({
+                          ...p,
+                          nome,
+                          tipo: tipoEstoqueCadeia(nome, cat?.tipo ?? p.tipo),
+                          unidade: cat?.unidade ?? p.unidade,
+                        }));
+                      }}
+                    />
+                    <datalist id="itens-estoque-cadastrados">
+                      {catalogoItensCompra.map((item) => (
+                        <option key={item.nome} value={item.nome} />
+                      ))}
+                    </datalist>
                   </Field>
                   <Field label="Categoria">
-                    <select className={inputCls} value={novoItem.tipo} onChange={(e) => setNovoItem((p) => ({ ...p, tipo: e.target.value as TipoItem }))}>
+                    <select
+                      className={inputCls}
+                      value={ehProdutoGeradoCadeia(novoItem.nome) ? 'ProdutoAcabado' : novoItem.tipo}
+                      onChange={(e) => setNovoItem((p) => ({ ...p, tipo: e.target.value as TipoItem }))}
+                      disabled={ehProdutoGeradoCadeia(novoItem.nome)}
+                    >
                       {TIPOS_ITEM.map((t) => (
-                        <option key={t} value={t}>{t}</option>
+                        <option key={t} value={t}>{TIPOS_ITEM_LABEL[t]}</option>
                       ))}
                     </select>
                   </Field>
@@ -2032,6 +2378,7 @@ export default function ChocoGest() {
                 </div>
                 <p className="text-amber-400/70 text-xs mt-2">
                   Cada inclusão gera um lançamento na lista. O saldo disponível é a soma dos lançamentos por item.
+                  Amêndoa Torrada é produto gerado da torra e aparece em Produtos gerados; na produção pode ser usada como insumo.
                   {estoqueEditandoId !== null && ' Use Editar na tabela abaixo para corrigir quantidades de lançamentos existentes.'}
                 </p>
                 <div className="flex flex-wrap gap-2 mt-4">
@@ -2231,11 +2578,20 @@ export default function ChocoGest() {
                       <option>Dinheiro</option><option>Cartao</option><option>Pix</option><option>Transferencia</option>
                     </select>
                   </Field>
-                  {novaCompra.formaPagamento === 'Cartao' && (
+                  {isPagamentoCartao(novaCompra.formaPagamento) && (
                     <>
                       <Field label="Cartão">
-                        <select className={inputCls} value={novaCompra.cartaoId} onChange={(e) => setNovaCompra((p) => ({ ...p, cartaoId: +e.target.value }))}>
-                          {data.cartoes.map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
+                        <select
+                          className={inputCls}
+                          value={resolverCartaoPorId(data.cartoes, novaCompra.cartaoId)?.id ?? ''}
+                          onChange={(e) => setNovaCompra((p) => ({ ...p, cartaoId: +e.target.value }))}
+                        >
+                          {data.cartoes.length === 0 && (
+                            <option value="">Cadastre um cartão na aba Cartões</option>
+                          )}
+                          {data.cartoes.map((c) => (
+                            <option key={c.id} value={c.id}>{c.nome}</option>
+                          ))}
                         </select>
                       </Field>
                       <Field label="Parcelas">
@@ -2248,6 +2604,7 @@ export default function ChocoGest() {
                 <p className="text-amber-400/70 text-xs mb-2">
                   Preencha os campos abaixo. Use &quot;+ Item&quot; para adicionar vários, ou &quot;Registrar Compra&quot; para incluir o item atual automaticamente.
                   Itens do tipo <strong>Equipamento</strong> vão para o Patrimônio (não para o Estoque).
+                  Compra no cartão entra como <strong>empréstimo</strong>; o dinheiro sai na <strong>quitação</strong> (aba Cartões).
                 </p>
                 <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-3">
                   <input
@@ -2262,8 +2619,15 @@ export default function ChocoGest() {
                       <option key={item.nome} value={item.nome} />
                     ))}
                   </datalist>
-                  <select className={inputCls} value={itemCompra.tipo} onChange={(e) => setItemCompra({ ...itemCompra, tipo: e.target.value as TipoItem })}>
-                    {TIPOS_ITEM.map((t) => <option key={t} value={t}>{t}</option>)}
+                  <select
+                    className={inputCls}
+                    value={ehProdutoGeradoCadeia(itemCompra.nome) ? 'ProdutoAcabado' : itemCompra.tipo}
+                    onChange={(e) => setItemCompra({ ...itemCompra, tipo: e.target.value as TipoItem })}
+                    disabled={ehProdutoGeradoCadeia(itemCompra.nome)}
+                  >
+                    {TIPOS_ITEM.map((t) => (
+                      <option key={t} value={t}>{TIPOS_ITEM_LABEL[t]}</option>
+                    ))}
                   </select>
                   <input type="number" placeholder="Qtd" className={inputCls} value={itemCompra.quantidade} onChange={(e) => setItemCompra({ ...itemCompra, quantidade: +e.target.value })} />
                   <input placeholder="Un" className={inputCls} value={itemCompra.unidade} onChange={(e) => setItemCompra({ ...itemCompra, unidade: e.target.value })} />
@@ -2811,14 +3175,14 @@ export default function ChocoGest() {
                 <div className="mb-4 p-3 rounded-lg bg-amber-950/40 border border-amber-800/50 text-sm text-amber-300/90">
                   <p className="font-medium text-amber-200 mb-1">Cadeia produtiva do cacau</p>
                   <p className="text-xs leading-relaxed">
-                    {CADEIA_PRODUCAO_CACAU.map((e) => e.produto).join(' → ')}
+                    Amendoa de Cacau → Amêndoa Torrada → Nibs + Casca → Licor de Cacau
                     {' → '}outros chocolates (com ingredientes adicionais)
                   </p>
                 </div>
 
                 <h4 className="text-amber-200 mb-2">1. Ingredientes (entrada)</h4>
                 <p className="text-amber-400/70 text-xs mb-3">
-                  Use matérias-primas compradas ou produtos intermediários já produzidos (ex.: Amêndoa Torrada para fazer Nibs).
+                  Use matérias-primas compradas ou produtos intermediários já produzidos (ex.: Amêndoa Torrada gera Nibs e Casca no mesmo lote).
                 </p>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
                   <Field label="Ingrediente">
@@ -2874,58 +3238,86 @@ export default function ChocoGest() {
                   </div>
                 )}
 
-                <h4 className="text-amber-200 mb-2">2. Produto gerado (saída)</h4>
-                {ingredientesSugeridos.length > 0 && (
+                <h4 className="text-amber-200 mb-2">2. Produtos gerados (saída)</h4>
+                {coprodutosDoLote.length >= 2 && (
                   <p className="text-amber-400/80 text-xs mb-3">
-                    Ingredientes sugeridos para <strong>{novaProducao.produto || 'este produto'}</strong>:{' '}
+                    A quebra da Amêndoa Torrada gera <strong>{coprodutosDoLote.join(' e ')}</strong> no mesmo lote.
+                    Informe a quantidade de cada um.
+                  </p>
+                )}
+                {coprodutosDoLote.length < 2 && ingredientesSugeridos.length > 0 && (
+                  <p className="text-amber-400/80 text-xs mb-3">
+                    Ingredientes sugeridos para <strong>{primeiroProdutoNome || 'este produto'}</strong>:{' '}
                     {ingredientesSugeridos.join(', ')}. Outros ingredientes também podem ser adicionados.
                   </p>
                 )}
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
-                  <Field label="Produto">
-                    <input
-                      list="catalogo-produtos-producao"
-                      className={inputCls}
-                      value={novaProducao.produto}
-                      onChange={(e) => {
-                        const nome = e.target.value;
-                        const unidade = unidadeSugeridaProduto(data.producoes, nome);
-                        setNovaProducao((p) => ({
-                          ...p,
-                          produto: nome,
-                          unidade: unidade ?? p.unidade,
-                        }));
-                      }}
-                      placeholder="Selecione ou digite um produto"
-                    />
-                    <datalist id="catalogo-produtos-producao">
-                      {catalogoProdutosProducao.map((nome) => (
-                        <option key={nome} value={nome} />
-                      ))}
-                    </datalist>
-                  </Field>
-                  <Field label="Quantidade produzida">
-                    <input
-                      type="number"
-                      step="0.001"
-                      min={0}
-                      className={inputCls}
-                      value={novaProducao.quantidade || ''}
-                      onChange={(e) =>
-                        setNovaProducao((p) => ({ ...p, quantidade: +e.target.value }))
-                      }
-                    />
-                  </Field>
-                  <Field label="Unidade">
-                    <input
-                      className={inputCls}
-                      value={novaProducao.unidade}
-                      onChange={(e) => setNovaProducao((p) => ({ ...p, unidade: e.target.value }))}
-                    />
-                  </Field>
+                <div className="space-y-3 mb-4">
+                  {novaProducao.produtos.map((prod, idx) => (
+                    <div key={idx} className="grid grid-cols-1 sm:grid-cols-7 gap-3 items-end">
+                      <div className="sm:col-span-3">
+                        <Field label={idx === 0 ? 'Produto' : `Produto ${idx + 1}`}>
+                          <input
+                            list="catalogo-produtos-producao"
+                            className={inputCls}
+                            value={prod.nome}
+                            onChange={(e) => {
+                              const nome = e.target.value;
+                              const unidade = unidadeSugeridaProduto(data.producoes, nome);
+                              atualizarProdutoSaida(idx, {
+                                nome,
+                                unidade: unidade ?? prod.unidade,
+                              });
+                            }}
+                            placeholder="Selecione ou digite um produto"
+                          />
+                        </Field>
+                      </div>
+                      <div className="sm:col-span-2">
+                        <Field label="Quantidade">
+                          <input
+                            type="number"
+                            step="0.001"
+                            min={0}
+                            className={inputCls}
+                            value={prod.quantidade || ''}
+                            onChange={(e) =>
+                              atualizarProdutoSaida(idx, { quantidade: +e.target.value })
+                            }
+                          />
+                        </Field>
+                      </div>
+                      <div className="sm:col-span-1">
+                        <Field label="Un.">
+                          <input
+                            className={inputCls}
+                            value={prod.unidade}
+                            onChange={(e) => atualizarProdutoSaida(idx, { unidade: e.target.value })}
+                          />
+                        </Field>
+                      </div>
+                      <div className="sm:col-span-1 pb-1">
+                        <Btn
+                          variant="danger"
+                          className="w-full"
+                          onClick={() => removerProdutoSaida(idx)}
+                        >
+                          ✕
+                        </Btn>
+                      </div>
+                    </div>
+                  ))}
+                  <datalist id="catalogo-produtos-producao">
+                    {catalogoProdutosProducao.map((nome) => (
+                      <option key={nome} value={nome} />
+                    ))}
+                  </datalist>
+                  <Btn variant="secondary" onClick={adicionarProdutoSaida}>
+                    + Produto gerado
+                  </Btn>
                 </div>
 
-                {resumoPerdaProducao && novaProducao.quantidade > 0 && (
+                {resumoPerdaProducao &&
+                  novaProducao.produtos.some((p) => p.quantidade > 0) && (
                   <p className="text-sm text-amber-300/90 mb-4 bg-amber-950/40 border border-amber-800/50 rounded-lg px-3 py-2">
                     Entrada: <strong>{resumoPerdaProducao.entrada} {resumoPerdaProducao.unidade}</strong>
                     {' → '}
@@ -2956,7 +3348,7 @@ export default function ChocoGest() {
                   <table className="w-full text-sm min-w-[640px]">
                     <thead><tr className="text-amber-300 border-b border-amber-700">
                       <th className="text-left py-2">Data</th><th className="text-left py-2">Lote</th>
-                      <th className="text-left py-2">Produto</th><th className="text-right py-2">Qtd</th>
+                      <th className="text-left py-2">Produtos</th><th className="text-right py-2">Qtd</th>
                       <th className="text-right py-2">Perda</th>
                       <th className="text-right py-2">Custo</th>
                       <th className="text-right py-2 w-32">Ações</th>
@@ -2969,8 +3361,12 @@ export default function ChocoGest() {
                         >
                           <td className="py-2">{formatDate(p.data)}</td>
                           <td className="py-2">{p.lote}</td>
-                          <td className="py-2">{p.produto}</td>
-                          <td className="py-2 text-right">{p.quantidade} {p.unidade}</td>
+                          <td className="py-2">{rotuloProdutosProducao(p)}</td>
+                          <td className="py-2 text-right">
+                            {produtosDaProducao(p)
+                              .map((prod) => `${prod.quantidade} ${prod.unidade}`)
+                              .join(' + ')}
+                          </td>
                           <td className="py-2 text-right text-amber-300/80">
                             {p.quantidadePerdida && p.quantidadePerdida > 0 ? (
                               <>
@@ -3171,7 +3567,10 @@ export default function ChocoGest() {
           {/* CARTÕES */}
           {activeTab === 'cartoes' && (
             <div>
-              <SectionTitle>Cartões de Crédito</SectionTitle>
+              <SectionTitle>Cartões — empréstimos e quitações</SectionTitle>
+              <p className="text-amber-400/70 text-sm mb-4">
+                Compra no cartão abre um empréstimo. O pagamento da fatura é lançado aqui como quitação (saída no Caixa ou no Banco).
+              </p>
               <Card className="mb-6">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <Field label="Nome do Cartão"><input className={inputCls} value={novoCartao.nome} onChange={(e) => setNovoCartao({ ...novoCartao, nome: e.target.value })} /></Field>
@@ -3196,44 +3595,229 @@ export default function ChocoGest() {
                 </p>
               </Card>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
-                {data.cartoes.map((c: CartaoModel) => {
-                  const gastoCartao = sumBy(
-                    data.compras.filter((comp) => comp.cartao === c.nome),
-                    (comp) => comp.total
-                  );
+                {cartoesExibicao.map((c: CartaoModel) => {
+                  const saldoDevedor = saldoDevedorCartao(emprestimosCartao, c.nome);
+                  const emprestado = totalEmprestadoCartao(emprestimosCartao, c.nome);
+                  const quitado = totalQuitadoCartao(emprestimosCartao, c.nome);
                   const parcelaMesAtual = valorParcelaNoMes(parcelasMensais, mesAtual, c.nome);
-                  const totalParcelado = totalParcelasCartao(parcelasMensais, c.nome);
+                  const disponivel =
+                    c.limite != null ? Math.max(0, arredondarDinheiro((c.limite ?? 0) - saldoDevedor)) : null;
+                  const cadastrado = c.id > 0;
                   return (
                     <Card key={c.id}>
                       <div className="flex justify-between items-start">
                         <div className="flex-1">
                           <div className="text-lg font-bold">{c.nome}</div>
-                          <div className="text-amber-300 text-sm">Limite: {formatCurrency(c.limite ?? 0)}</div>
-                          <div className="text-amber-300 text-sm">Gasto total: {formatCurrency(gastoCartao)}</div>
-                          <div className="text-amber-300 text-sm">
-                            Parcela em {formatMesAno(mesAtual)}: {formatCurrency(parcelaMesAtual)}
+                          {cadastrado && (
+                            <div className="text-amber-300 text-sm">Limite: {formatCurrency(c.limite ?? 0)}</div>
+                          )}
+                          {disponivel != null && (
+                            <div className="text-amber-300 text-sm">Disponível: {formatCurrency(disponivel)}</div>
+                          )}
+                          <div className="text-amber-300 text-sm">Emprestado: {formatCurrency(emprestado)}</div>
+                          <div className="text-amber-300 text-sm">Quitado: {formatCurrency(quitado)}</div>
+                          <div className="text-amber-100 text-sm font-medium">
+                            Saldo devedor: {formatCurrency(saldoDevedor)}
                           </div>
-                          <div className="text-amber-300 text-sm">Total parcelado: {formatCurrency(totalParcelado)}</div>
+                          <div className="text-amber-300 text-sm">
+                            Parcela em aberto {formatMesAno(mesAtual)}: {formatCurrency(parcelaMesAtual)}
+                          </div>
                           {cotacaoDolar > 0 && (
                             <div className="text-amber-200 text-sm mt-1">
-                              Em dólar: {formatUsd(brlParaUsd(totalParcelado, cotacaoDolar) ?? 0)}
+                              Saldo em dólar: {formatUsd(brlParaUsd(saldoDevedor, cotacaoDolar) ?? 0)}
                             </div>
                           )}
                         </div>
-                        <Btn variant="danger" onClick={() => removerCartao(c.id)}>✕</Btn>
+                        {cadastrado && (
+                          <Btn variant="danger" onClick={() => removerCartao(c.id)}>✕</Btn>
+                        )}
                       </div>
                     </Card>
                   );
                 })}
               </div>
+              <Card className="mb-6">
+                <h4 className="text-amber-200 font-medium mb-1">Registrar quitação</h4>
+                <p className="text-amber-400/70 text-xs mb-4">
+                  Pague o empréstimo com dinheiro do Caixa ou do Banco. O saldo do cartão diminui e a saída financeira é lançada automaticamente.
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                  <DateField
+                    label="Data do pagamento"
+                    value={novaQuitacao.data}
+                    onChange={(dataQuitacao) => setNovaQuitacao((p) => ({ ...p, data: dataQuitacao }))}
+                  />
+                  <Field label="Empréstimo">
+                    <select
+                      className={inputCls}
+                      value={novaQuitacao.compraId || ''}
+                      onChange={(e) => {
+                        const compraId = +e.target.value;
+                        const emp = emprestimosCartao.find((x) => x.compraId === compraId);
+                        if (!emp) {
+                          setNovaQuitacao((p) => ({ ...p, compraId: 0, valor: 0 }));
+                          return;
+                        }
+                        selecionarEmprestimoQuitacao(emp.compraId, emp.saldo, emp.valorParcela);
+                      }}
+                    >
+                      <option value="">Selecione...</option>
+                      {emprestimosAbertos.map((e) => (
+                        <option key={e.compraId} value={e.compraId}>
+                          {formatDate(e.data)} — {e.fornecedor} ({e.cartao}) · saldo {formatCurrency(e.saldo)}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field label="Valor (R$)">
+                    <input
+                      type="number"
+                      step="0.01"
+                      min={0}
+                      className={inputCls}
+                      value={novaQuitacao.valor || ''}
+                      onChange={(e) => setNovaQuitacao((p) => ({ ...p, valor: +e.target.value }))}
+                    />
+                  </Field>
+                  <Field label="Pagar de">
+                    <select
+                      className={inputCls}
+                      value={novaQuitacao.origem}
+                      onChange={(e) =>
+                        setNovaQuitacao((p) => ({ ...p, origem: e.target.value as OrigemQuitacaoCartao }))
+                      }
+                    >
+                      <option value="banco">Banco</option>
+                      <option value="caixa">Caixa</option>
+                    </select>
+                  </Field>
+                  {novaQuitacao.origem === 'banco' && (
+                    <Field label="Banco">
+                      <select
+                        className={inputCls}
+                        value={novaQuitacao.banco || data.bancos[0]?.nome || ''}
+                        onChange={(e) => setNovaQuitacao((p) => ({ ...p, banco: e.target.value }))}
+                      >
+                        {data.bancos.map((b) => (
+                          <option key={b.id} value={b.nome}>{b.nome}</option>
+                        ))}
+                      </select>
+                    </Field>
+                  )}
+                  <Field label="Descrição (opcional)">
+                    <input
+                      className={inputCls}
+                      value={novaQuitacao.descricao}
+                      onChange={(e) => setNovaQuitacao((p) => ({ ...p, descricao: e.target.value }))}
+                      placeholder="Ex.: fatura Ourocard agosto"
+                    />
+                  </Field>
+                </div>
+                <Btn className="mt-4" onClick={registrarQuitacao}>Registrar quitação</Btn>
+              </Card>
+              <Card className="mb-6">
+                <h4 className="text-amber-200 font-medium mb-4">Empréstimos (compras no cartão)</h4>
+                <div className="table-scroll">
+                  <table className="w-full text-sm min-w-[800px]">
+                    <thead>
+                      <tr className="text-amber-300 border-b border-amber-700">
+                        <th className="text-left py-2">Data</th>
+                        <th className="text-left py-2">Fornecedor</th>
+                        <th className="text-left py-2">Cartão</th>
+                        <th className="text-right py-2">Parcelas</th>
+                        <th className="text-right py-2">Total</th>
+                        <th className="text-right py-2">Quitado</th>
+                        <th className="text-right py-2">Saldo</th>
+                        <th className="text-left py-2">Status</th>
+                        <th className="py-2"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {emprestimosCartao.map((e) => (
+                        <tr key={e.compraId} className="border-b border-amber-800/30">
+                          <td className="py-2">{formatDate(e.data)}</td>
+                          <td className="py-2">{e.fornecedor}</td>
+                          <td className="py-2">{e.cartao}</td>
+                          <td className="py-2 text-right">
+                            {e.parcelas}x
+                            {e.mesInicial && e.mesFinal ? (
+                              <span className="block text-xs text-amber-400/70">
+                                {formatMesAno(e.mesInicial)}
+                                {e.mesInicial !== e.mesFinal ? ` → ${formatMesAno(e.mesFinal)}` : ''}
+                              </span>
+                            ) : null}
+                          </td>
+                          <td className="py-2 text-right">{formatCurrency(e.total)}</td>
+                          <td className="py-2 text-right">{formatCurrency(e.pago)}</td>
+                          <td className="py-2 text-right font-medium">{formatCurrency(e.saldo)}</td>
+                          <td className="py-2">
+                            {STATUS_EMPRESTIMO_LABEL[e.status]}
+                          </td>
+                          <td className="py-2 text-right">
+                            {e.status !== 'quitado' && (
+                              <Btn
+                                variant="secondary"
+                                onClick={() => selecionarEmprestimoQuitacao(e.compraId, e.saldo, e.valorParcela)}
+                              >
+                                Quitar
+                              </Btn>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {emprestimosCartao.length === 0 && (
+                  <p className="text-amber-400/60 py-4">
+                    Nenhum empréstimo. Em Compras, use forma de pagamento Cartão.
+                  </p>
+                )}
+              </Card>
+              <Card className="mb-6">
+                <h4 className="text-amber-200 font-medium mb-4">Histórico de quitações</h4>
+                <div className="table-scroll">
+                  <table className="w-full text-sm min-w-[640px]">
+                    <thead>
+                      <tr className="text-amber-300 border-b border-amber-700">
+                        <th className="text-left py-2">Data</th>
+                        <th className="text-left py-2">Cartão</th>
+                        <th className="text-left py-2">Descrição</th>
+                        <th className="text-left py-2">Origem</th>
+                        <th className="text-right py-2">Valor</th>
+                        <th className="py-2"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {quitacoesOrdenadas.map((q) => (
+                        <tr key={q.id} className="border-b border-amber-800/30">
+                          <td className="py-2">{formatDate(q.data)}</td>
+                          <td className="py-2">{q.cartao}</td>
+                          <td className="py-2">{q.descricao || '—'}</td>
+                          <td className="py-2">
+                            {q.origem === 'caixa' ? 'Caixa' : `Banco${q.banco ? ` (${q.banco})` : ''}`}
+                          </td>
+                          <td className="py-2 text-right">{formatCurrency(q.valor)}</td>
+                          <td className="py-2 text-right">
+                            <Btn variant="danger" onClick={() => removerQuitacao(q.id)}>Estornar</Btn>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {quitacoesOrdenadas.length === 0 && (
+                  <p className="text-amber-400/60 py-4">Nenhuma quitação registrada ainda.</p>
+                )}
+              </Card>
               <Card>
-                <h4 className="text-amber-200 font-medium mb-4">Soma das parcelas por cartão e por mês</h4>
+                <h4 className="text-amber-200 font-medium mb-4">Parcelas em aberto por cartão e por mês</h4>
                 <div className="table-scroll">
                   <table className="w-full text-sm min-w-[480px]">
                     <thead>
                       <tr className="text-amber-300 border-b border-amber-700">
                         <th className="text-left py-2">Mês</th>
-                        {data.cartoes.map((c) => (
+                        {cartoesExibicao.map((c) => (
                           <th key={c.id} className="text-right py-2">{c.nome}</th>
                         ))}
                         <th className="text-right py-2">Total</th>
@@ -3246,7 +3830,7 @@ export default function ChocoGest() {
                           className={`border-b border-amber-800/30 ${mes === mesAtual ? 'bg-amber-900/30' : ''}`}
                         >
                           <td className="py-2">{formatMesAno(mes)}</td>
-                          {data.cartoes.map((c) => {
+                          {cartoesExibicao.map((c) => {
                             const valor = valorParcelaNoMes(parcelasMensais, mes, c.nome);
                             return (
                               <td key={c.id} className="py-2 text-right text-amber-200">
@@ -3261,7 +3845,7 @@ export default function ChocoGest() {
                     <tfoot>
                       <tr className="font-bold text-amber-100 border-t border-amber-700">
                         <td className="py-3">Total por cartão</td>
-                        {data.cartoes.map((c) => (
+                        {cartoesExibicao.map((c) => (
                           <td key={c.id} className="py-3 text-right">
                             {formatCurrency(totalParcelasCartao(parcelasMensais, c.nome))}
                           </td>
@@ -3274,7 +3858,7 @@ export default function ChocoGest() {
                   </table>
                 </div>
                 {mesesParcelas.length === 0 && (
-                  <p className="text-amber-400/60 py-4">Nenhuma compra parcelada no cartão registrada.</p>
+                  <p className="text-amber-400/60 py-4">Nenhuma parcela em aberto.</p>
                 )}
               </Card>
             </div>
@@ -3350,7 +3934,9 @@ export default function ChocoGest() {
                                 <Btn variant="danger" onClick={() => removerMovCaixa(m)}>Excluir</Btn>
                               </>
                             ) : (
-                              <span className="text-amber-500/60 text-xs">Compras/Vendas</span>
+                              <span className="text-amber-500/60 text-xs">
+                                {m.referencia.startsWith('quitacao-') ? 'Quitação cartão' : 'Compras/Vendas'}
+                              </span>
                             )}
                           </td>
                         </tr>
@@ -3483,7 +4069,9 @@ export default function ChocoGest() {
                                 <Btn variant="danger" onClick={() => removerMovBanco(m)}>Excluir</Btn>
                               </>
                             ) : (
-                              <span className="text-amber-500/60 text-xs">Compras/Vendas</span>
+                              <span className="text-amber-500/60 text-xs">
+                                {m.referencia.startsWith('quitacao-') ? 'Quitação cartão' : 'Compras/Vendas'}
+                              </span>
                             )}
                           </td>
                         </tr>

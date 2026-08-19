@@ -1,4 +1,12 @@
-import { calcularPerdaProducao, resolverTipoIngredienteProducao } from './estoque';
+import { tipoEstoqueCadeia } from './cadeia-producao';
+import { vincularCartaoNasCompras } from './cartoes';
+import {
+  alocarCustoEntreProdutos,
+  calcularPerdaProducao,
+  espelharCamposLegadoProducao,
+  produtosDaProducao,
+  resolverTipoIngredienteProducao,
+} from './estoque';
 import { AppData, EMPTY_DATA, STORAGE_KEYS } from './types';
 import type {
   BancoModel,
@@ -9,6 +17,8 @@ import type {
   PatrimonioItem,
   PrecoGerado,
   Producao,
+  ProdutoGeradoProducao,
+  QuitacaoCartao,
   Venda,
 } from './types';
 import { normalizeDateISO, todayISO } from './format';
@@ -21,10 +31,11 @@ function asNumber(value: unknown, fallback = 0): number {
 function normalizeEstoque(items: unknown[]): EstoqueItem[] {
   return items.map((raw, idx) => {
     const item = raw as Partial<EstoqueItem>;
+    const nome = item.nome ?? '';
     return {
       id: item.id ?? idx + 1,
-      nome: item.nome ?? '',
-      tipo: item.tipo ?? 'MateriaPrima',
+      nome,
+      tipo: tipoEstoqueCadeia(nome, item.tipo ?? 'MateriaPrima'),
       quantidade: asNumber(item.quantidade),
       unidade: item.unidade ?? 'un',
       valorUnit: asNumber(item.valorUnit),
@@ -120,16 +131,46 @@ function normalizeVendas(items: unknown[]): Venda[] {
   });
 }
 
+function normalizeProdutosGerados(
+  item: Partial<Producao>,
+  custoEstimado: number
+): ProdutoGeradoProducao[] {
+  const base = produtosDaProducao({
+    produto: item.produto ?? '',
+    quantidade: asNumber(item.quantidade, 0),
+    unidade: item.unidade ?? 'kg',
+    produtos: Array.isArray(item.produtos)
+      ? item.produtos.map((p) => ({
+          nome: p.nome ?? '',
+          quantidade: asNumber(p.quantidade),
+          unidade: p.unidade ?? item.unidade ?? 'kg',
+          custoAlocado:
+            p.custoAlocado !== undefined && p.custoAlocado !== null
+              ? asNumber(p.custoAlocado)
+              : undefined,
+        }))
+      : undefined,
+  });
+
+  if (base.length === 0) return [];
+  return alocarCustoEntreProdutos(custoEstimado, base);
+}
+
 function normalizeProducoes(items: unknown[]): Producao[] {
   return items.map((raw, idx) => {
     const item = raw as Partial<Producao>;
+    const custoEstimado = asNumber(item.custoEstimado);
+    const produtos = normalizeProdutosGerados(item, custoEstimado);
+    const legado = espelharCamposLegadoProducao(produtos);
+
     return {
       id: item.id ?? idx + 1,
       data: normalizeDateISO(item.data, todayISO()),
       lote: item.lote ?? '',
-      produto: item.produto ?? '',
-      quantidade: asNumber(item.quantidade, 1),
-      unidade: item.unidade ?? 'un',
+      produto: legado.produto || (item.produto ?? ''),
+      quantidade: legado.produto ? legado.quantidade : asNumber(item.quantidade, 0),
+      unidade: legado.produto ? legado.unidade : (item.unidade ?? 'kg'),
+      produtos,
       ingredientes: Array.isArray(item.ingredientes)
         ? item.ingredientes.map((ing) => ({
             nome: ing.nome ?? '',
@@ -139,7 +180,7 @@ function normalizeProducoes(items: unknown[]): Producao[] {
             tipo: ing.tipo,
           }))
         : [],
-      custoEstimado: asNumber(item.custoEstimado),
+      custoEstimado,
       quantidadePerdida:
         item.quantidadePerdida !== undefined && item.quantidadePerdida !== null
           ? asNumber(item.quantidadePerdida)
@@ -163,9 +204,26 @@ function normalizeProducoes(items: unknown[]): Producao[] {
       ...p,
       ingredientes: p.ingredientes.map((ing) => ({
         ...ing,
-        tipo: ing.tipo ?? resolverTipoIngredienteProducao(ing, arr),
+        tipo: resolverTipoIngredienteProducao(ing, arr),
       })),
     }));
+}
+
+function normalizeQuitacoesCartao(items: unknown[]): QuitacaoCartao[] {
+  return items.map((raw, idx) => {
+    const item = raw as Partial<QuitacaoCartao>;
+    const origem = item.origem === 'caixa' ? 'caixa' : 'banco';
+    return {
+      id: item.id ?? idx + 1,
+      data: normalizeDateISO(item.data, todayISO()),
+      cartao: item.cartao ?? '',
+      compraId: asNumber(item.compraId),
+      valor: asNumber(item.valor),
+      origem,
+      banco: item.banco,
+      descricao: item.descricao,
+    };
+  });
 }
 
 function normalizePrecosGerados(items: unknown[]): PrecoGerado[] {
@@ -188,17 +246,19 @@ function normalizePrecosGerados(items: unknown[]): PrecoGerado[] {
 }
 
 export function normalizeAppData(data: AppData): AppData {
+  const cartoes = normalizeCartoes(data.cartoes);
   return {
     estoque: normalizeEstoque(data.estoque),
-    compras: normalizeCompras(data.compras),
+    compras: vincularCartaoNasCompras(normalizeCompras(data.compras), cartoes),
     vendas: normalizeVendas(data.vendas),
     producoes: normalizeProducoes(data.producoes),
-    cartoes: normalizeCartoes(data.cartoes),
+    cartoes,
     bancos: normalizeBancos(data.bancos),
     patrimonio: normalizePatrimonio(data.patrimonio),
     movimentosCaixa: normalizeMovimentos(data.movimentosCaixa),
     movimentosBanco: normalizeMovimentos(data.movimentosBanco),
     precosGerados: normalizePrecosGerados(data.precosGerados ?? []),
+    quitacoesCartao: normalizeQuitacoesCartao(data.quitacoesCartao ?? []),
   };
 }
 
@@ -216,6 +276,7 @@ export function loadAppData(): AppData {
     { key: 'caixa', field: 'movimentosCaixa' },
     { key: 'banco', field: 'movimentosBanco' },
     { key: 'precos', field: 'precosGerados' },
+    { key: 'quitacoesCartao', field: 'quitacoesCartao' },
   ];
 
   for (const { key, field } of loaders) {
@@ -255,6 +316,7 @@ export function saveAppData(data: AppData): void {
   localStorage.setItem(STORAGE_KEYS.caixa, JSON.stringify(normalized.movimentosCaixa));
   localStorage.setItem(STORAGE_KEYS.banco, JSON.stringify(normalized.movimentosBanco));
   localStorage.setItem(STORAGE_KEYS.precos, JSON.stringify(normalized.precosGerados));
+  localStorage.setItem(STORAGE_KEYS.quitacoesCartao, JSON.stringify(normalized.quitacoesCartao));
 }
 
 export function exportBackup(data: AppData): void {

@@ -1,6 +1,7 @@
 import {
   agruparEstoque,
   catalogoNomesProdutos,
+  custoUltimaProducaoDoProduto,
   filtrarSaldoProdutosGerados,
   type SaldoEstoque,
 } from '@/lib/estoque';
@@ -76,15 +77,7 @@ function custoUltimaProducao(
   producoes: Producao[],
   produto: string
 ): { custoUnitario: number; unidade: string } | null {
-  const lista = producoes
-    .filter((p) => nomeProdutoIgual(p.produto, produto) && p.quantidade > 0)
-    .sort((a, b) => b.data.localeCompare(a.data) || b.id - a.id);
-  const ultima = lista[0];
-  if (!ultima) return null;
-  return {
-    custoUnitario: arredondar(ultima.custoEstimado / ultima.quantidade),
-    unidade: ultima.unidade || 'un',
-  };
+  return custoUltimaProducaoDoProduto(producoes, produto);
 }
 
 /**
