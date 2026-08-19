@@ -56,19 +56,31 @@ export function produtosDaCadeia(): string[] {
   return CADEIA_PRODUCAO_CACAU.map((e) => e.produto);
 }
 
-const ALIASES_PRODUTO_GERADO = new Set(['amendoa torrada']);
+const ALIASES_MATERIA_PRIMA = new Set(['amêndoa torrada', 'amendoa torrada']);
 
-/** Produtos da cadeia (ex.: Amêndoa Torrada) entram no estoque como produto gerado. */
+/** Insumos da cadeia que entram no estoque como matéria-prima (compra ou torra). */
+export function ehMateriaPrimaCadeia(nome: string): boolean {
+  return ALIASES_MATERIA_PRIMA.has(nome.trim().toLowerCase());
+}
+
+/** Produtos da cadeia (ex.: Nibs) entram no estoque como produto gerado. */
 export function ehProdutoGeradoCadeia(nome: string): boolean {
   const key = nome.trim().toLowerCase();
-  if (!key) return false;
-  if (ALIASES_PRODUTO_GERADO.has(key)) return true;
+  if (!key || ehMateriaPrimaCadeia(key)) return false;
   return CADEIA_PRODUCAO_CACAU.some((e) => e.produto.toLowerCase() === key);
 }
 
 export function tipoEstoqueCadeia(nome: string, fallback: TipoItem = 'ProdutoAcabado'): TipoItem {
+  if (ehMateriaPrimaCadeia(nome)) return 'MateriaPrima';
   if (ehProdutoGeradoCadeia(nome)) return 'ProdutoAcabado';
   return fallback ?? 'MateriaPrima';
+}
+
+/** Tipo imposto pela cadeia, ou null quando o usuário pode escolher. */
+export function tipoCadeiaFixo(nome: string): TipoItem | null {
+  if (ehMateriaPrimaCadeia(nome)) return 'MateriaPrima';
+  if (ehProdutoGeradoCadeia(nome)) return 'ProdutoAcabado';
+  return null;
 }
 
 export function etapaAnterior(produto: string): EtapaCadeia | undefined {

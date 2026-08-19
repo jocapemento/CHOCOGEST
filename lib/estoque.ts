@@ -1,4 +1,4 @@
-import { ehProdutoGeradoCadeia, tipoEstoqueCadeia } from '@/lib/cadeia-producao';
+import { ehMateriaPrimaCadeia, tipoEstoqueCadeia } from '@/lib/cadeia-producao';
 import type {
   Compra,
   EstoqueItem,
@@ -169,10 +169,11 @@ export function resolverTipoIngredienteProducao(
   ingrediente: Producao['ingredientes'][number],
   producoes: Producao[]
 ): TipoItem {
-  if (ehProdutoGeradoCadeia(ingrediente.nome)) return 'ProdutoAcabado';
-  if (ingrediente.tipo) return ingrediente.tipo;
-  if (isProdutoGerado(ingrediente.nome, producoes)) return 'ProdutoAcabado';
-  return 'MateriaPrima';
+  return tipoEstoqueCadeia(
+    ingrediente.nome,
+    ingrediente.tipo ??
+      (isProdutoGerado(ingrediente.nome, producoes) ? 'ProdutoAcabado' : 'MateriaPrima')
+  );
 }
 
 export function saldoIngredienteProducao(
@@ -181,10 +182,10 @@ export function saldoIngredienteProducao(
   producoes: Producao[],
   tipo?: TipoItem
 ): SaldoEstoque | undefined {
-  const tipoResolvido = ehProdutoGeradoCadeia(nome)
-    ? ('ProdutoAcabado' as TipoItem)
-    : (tipo ??
-      (isProdutoGerado(nome, producoes) ? ('ProdutoAcabado' as TipoItem) : ('MateriaPrima' as TipoItem)));
+  const tipoResolvido = tipoEstoqueCadeia(
+    nome,
+    tipo ?? (isProdutoGerado(nome, producoes) ? 'ProdutoAcabado' : 'MateriaPrima')
+  );
 
   return agruparEstoquePorNomeTipo(estoque).find(
     (s) => s.nome.toLowerCase() === nome.toLowerCase() && s.tipo === tipoResolvido
@@ -258,7 +259,7 @@ export interface ItemCatalogo {
 }
 
 const ITENS_CONHECIDOS_ESTOQUE: ItemCatalogo[] = [
-  { nome: 'Amêndoa Torrada', tipo: 'ProdutoAcabado', unidade: 'kg', valorUnit: 0 },
+  { nome: 'Amêndoa Torrada', tipo: 'MateriaPrima', unidade: 'kg', valorUnit: 0 },
 ];
 
 export function catalogoItensLancados(compras: Compra[], estoque: EstoqueItem[]): ItemCatalogo[] {
@@ -492,7 +493,12 @@ export function filtrarSaldoProdutosGerados(
 ): SaldoEstoque[] {
   const nomes = nomesProdutosGerados(producoes);
   return saldo
-    .filter((s) => nomes.has(s.nome.toLowerCase()))
+    .filter(
+      (s) =>
+        s.tipo !== 'MateriaPrima' &&
+        !ehMateriaPrimaCadeia(s.nome) &&
+        nomes.has(s.nome.toLowerCase())
+    )
     .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
 }
 
@@ -508,7 +514,13 @@ export function filtrarLancamentosProdutosGerados(
 ): EstoqueItem[] {
   const nomes = nomesProdutosGerados(producoes);
   return estoque
-    .filter((e) => e.quantidade > 0 && nomes.has(e.nome.toLowerCase()))
+    .filter(
+      (e) =>
+        e.quantidade > 0 &&
+        e.tipo !== 'MateriaPrima' &&
+        !ehMateriaPrimaCadeia(e.nome) &&
+        nomes.has(e.nome.toLowerCase())
+    )
     .sort((a, b) => (b.data ?? '').localeCompare(a.data ?? '') || b.id - a.id);
 }
 

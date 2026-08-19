@@ -5,7 +5,7 @@ process.env.GITHUB_PAGES = 'true';
 console.log('1/7 Teste FIFO estoque...');
 execSync('node scripts/test-fifo.mjs', { stdio: 'inherit' });
 
-console.log('2/7 Amêndoa Torrada como produto gerado...');
+console.log('2/7 Amêndoa Torrada como matéria-prima...');
 execSync('node scripts/test-amendoa-materia-prima.mjs', { stdio: 'inherit' });
 
 console.log('3/7 Quebra Amêndoa Torrada (Nibs + Casca)...');

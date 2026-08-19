@@ -42,10 +42,10 @@ import {
 } from '@/lib/cartoes';
 import {
   coprodutosSugeridosParaIngredientes,
-  ehProdutoGeradoCadeia,
   ingredientesSugeridosPara,
   preencherProdutosComCoprodutos,
   produtosDaCadeia,
+  tipoCadeiaFixo,
   tipoEstoqueCadeia,
 } from '@/lib/cadeia-producao';
 import {
@@ -2360,9 +2360,9 @@ export default function ChocoGest() {
                   <Field label="Categoria">
                     <select
                       className={inputCls}
-                      value={ehProdutoGeradoCadeia(novoItem.nome) ? 'ProdutoAcabado' : novoItem.tipo}
+                      value={tipoCadeiaFixo(novoItem.nome) ?? novoItem.tipo}
                       onChange={(e) => setNovoItem((p) => ({ ...p, tipo: e.target.value as TipoItem }))}
-                      disabled={ehProdutoGeradoCadeia(novoItem.nome)}
+                      disabled={tipoCadeiaFixo(novoItem.nome) !== null}
                     >
                       {TIPOS_ITEM.map((t) => (
                         <option key={t} value={t}>{TIPOS_ITEM_LABEL[t]}</option>
@@ -2381,7 +2381,7 @@ export default function ChocoGest() {
                 </div>
                 <p className="text-amber-400/70 text-xs mt-2">
                   Cada inclusão gera um lançamento na lista. O saldo disponível é a soma dos lançamentos por item.
-                  Amêndoa Torrada é produto gerado da torra e aparece em Produtos gerados; na produção pode ser usada como insumo.
+                  Amêndoa Torrada entra como matéria-prima e aparece em Matérias-primas; na produção gera Nibs e Casca.
                   {estoqueEditandoId !== null && ' Use Editar na tabela abaixo para corrigir quantidades de lançamentos existentes.'}
                 </p>
                 <div className="flex flex-wrap gap-2 mt-4">
@@ -2624,9 +2624,9 @@ export default function ChocoGest() {
                   </datalist>
                   <select
                     className={inputCls}
-                    value={ehProdutoGeradoCadeia(itemCompra.nome) ? 'ProdutoAcabado' : itemCompra.tipo}
+                    value={tipoCadeiaFixo(itemCompra.nome) ?? itemCompra.tipo}
                     onChange={(e) => setItemCompra({ ...itemCompra, tipo: e.target.value as TipoItem })}
-                    disabled={ehProdutoGeradoCadeia(itemCompra.nome)}
+                    disabled={tipoCadeiaFixo(itemCompra.nome) !== null}
                   >
                     {TIPOS_ITEM.map((t) => (
                       <option key={t} value={t}>{TIPOS_ITEM_LABEL[t]}</option>
@@ -3194,7 +3194,7 @@ export default function ChocoGest() {
 
                 <h4 className="text-amber-200 mb-2">1. Ingredientes (entrada)</h4>
                 <p className="text-amber-400/70 text-xs mb-3">
-                  Use matérias-primas compradas ou produtos intermediários já produzidos (ex.: Amêndoa Torrada gera Nibs e Casca no mesmo lote).
+                  Use matérias-primas (ex.: Amêndoa Torrada gera Nibs e Casca no mesmo lote) ou produtos intermediários já produzidos.
                 </p>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
                   <Field label="Ingrediente">
