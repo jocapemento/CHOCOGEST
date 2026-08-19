@@ -195,6 +195,8 @@ export interface ResumoClienteVenda {
   quantidadeTotal: number;
   valorTotal: number;
   produtos: ProdutoCompradoCliente[];
+  /** Data ISO da venda mais recente deste cliente. */
+  ultimaDataCompra: string | null;
 }
 
 export function rankingMelhoresClientes(vendas: Venda[]): ResumoClienteVenda[] {
@@ -214,8 +216,13 @@ export function rankingMelhoresClientes(vendas: Venda[]): ResumoClienteVenda[] {
         quantidadeTotal: 0,
         valorTotal: 0,
         produtos: [],
+        ultimaDataCompra: null,
       };
       map.set(key, resumo);
+    }
+
+    if (!resumo.ultimaDataCompra || venda.data > resumo.ultimaDataCompra) {
+      resumo.ultimaDataCompra = venda.data;
     }
 
     if (concluida) {

@@ -1960,6 +1960,9 @@ export default function ChocoGest() {
   );
 
   const rankingClientes = useMemo(() => rankingMelhoresClientes(data.vendas), [data.vendas]);
+  const clienteFormInfo = rankingClientes.find(
+    (c) => c.cliente.toLowerCase() === novaVenda.cliente.trim().toLowerCase()
+  );
   const vendasPendentes = useMemo(() => listarVendasPendentes(data.vendas), [data.vendas]);
   const resumoPendentes = useMemo(() => resumoVendasPendentes(data.vendas), [data.vendas]);
   const reservasPendentes = useMemo(() => produtosReservadosPendentes(data.vendas), [data.vendas]);
@@ -2727,6 +2730,11 @@ export default function ChocoGest() {
                   />
                   <Field label="Cliente">
                     <input className={inputCls} value={novaVenda.cliente} onChange={(e) => setNovaVenda((p) => ({ ...p, cliente: e.target.value }))} />
+                    {clienteFormInfo?.ultimaDataCompra && (
+                      <p className="text-amber-400/80 text-xs mt-1">
+                        Última compra: {formatDate(clienteFormInfo.ultimaDataCompra)}
+                      </p>
+                    )}
                   </Field>
                   <Field label="Pagamento">
                     <select className={inputCls} value={novaVenda.formaPagamento} onChange={(e) => setNovaVenda((p) => ({ ...p, formaPagamento: e.target.value }))}>
@@ -3077,15 +3085,16 @@ export default function ChocoGest() {
                 <h4 className="text-amber-200 font-medium mb-1">Melhores clientes</h4>
                 <p className="text-amber-400/70 text-xs mb-4">
                   Ranking por valor total de vendas concluídas (quantidade e produtos comprados).
-                  Pedidos pendentes aparecem como contagem extra.
+                  Pedidos pendentes aparecem como contagem extra. A última compra é a data mais recente do cliente.
                 </p>
                 {rankingClientes.length > 0 ? (
                   <div className="table-scroll">
-                    <table className="w-full text-sm min-w-[800px]">
+                    <table className="w-full text-sm min-w-[920px]">
                       <thead>
                         <tr className="text-amber-300 border-b border-amber-700">
                           <th className="text-left py-2">#</th>
                           <th className="text-left py-2">Cliente</th>
+                          <th className="text-left py-2">Última compra</th>
                           <th className="text-right py-2">Vendas</th>
                           <th className="text-right py-2">Qtd total</th>
                           <th className="text-left py-2">Produtos comprados</th>
@@ -3097,6 +3106,9 @@ export default function ChocoGest() {
                           <tr key={c.cliente} className="border-b border-amber-800/30">
                             <td className="py-2 text-amber-400/80">{idx + 1}</td>
                             <td className="py-2 font-medium">{c.cliente}</td>
+                            <td className="py-2 text-amber-200">
+                              {c.ultimaDataCompra ? formatDate(c.ultimaDataCompra) : '—'}
+                            </td>
                             <td className="py-2 text-right">
                               {c.vendasConcluidas}
                               {c.vendasEmProcessamento > 0 && (
@@ -3123,7 +3135,7 @@ export default function ChocoGest() {
                       </tbody>
                       <tfoot>
                         <tr className="font-bold text-amber-100 border-t border-amber-700">
-                          <td colSpan={5} className="py-3 text-right">
+                          <td colSpan={6} className="py-3 text-right">
                             Total vendas concluídas
                           </td>
                           <td className="py-3 text-right">

@@ -250,10 +250,11 @@ export function gerarPdfVendas(data: AppData) {
 
     autoTable(doc, {
       startY: startY + 4,
-      head: [['#', 'Cliente', 'Vendas', 'Qtd total', 'Produtos', 'Valor total']],
+      head: [['#', 'Cliente', 'Última compra', 'Vendas', 'Qtd total', 'Produtos', 'Valor total']],
       body: ranking.map((c, idx) => [
         String(idx + 1),
         c.cliente,
+        c.ultimaDataCompra ? formatDate(c.ultimaDataCompra) : '—',
         c.vendasEmProcessamento > 0
           ? `${c.vendasConcluidas} (+${c.vendasEmProcessamento} pend.)`
           : String(c.vendasConcluidas),
