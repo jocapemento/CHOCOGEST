@@ -7,6 +7,7 @@ import {
   filtrarSaldoMateriaPrima,
   filtrarSaldoProdutosGerados,
 } from './estoque';
+import { listarEmprestimosCartao, saldoDevedorTotal, totalEmprestadoGeral } from './cartoes';
 import { totalizarProdutosPrecificados } from './precificacao';
 import {
   formatarItensVenda,
@@ -343,6 +344,13 @@ export function gerarPdfDashboard(data: AppData) {
     sumBy(data.movimentosBanco.filter((m) => m.tipo === 'entrada'), (m) => m.valor) -
     sumBy(data.movimentosBanco.filter((m) => m.tipo === 'saida'), (m) => m.valor);
   const valorPatrimonio = sumBy(data.patrimonio, (p) => p.valorAtual);
+  const emprestimosCartao = listarEmprestimosCartao(
+    data.compras,
+    data.quitacoesCartao,
+    data.cartoes
+  );
+  const saldoEmprestimos = saldoDevedorTotal(emprestimosCartao);
+  const totalEmprestado = totalEmprestadoGeral(emprestimosCartao);
 
   const resumoPreco = totalizarProdutosPrecificados(
     data.estoque,
@@ -365,6 +373,8 @@ export function gerarPdfDashboard(data: AppData) {
       ['Total de vendas', formatCurrency(totalVendas)],
       ['Saldo em caixa', formatCurrency(saldoCaixa)],
       ['Saldo em banco', formatCurrency(saldoBanco)],
+      ['Empréstimos (saldo em aberto)', formatCurrency(saldoEmprestimos)],
+      ['Empréstimos (total emprestado)', formatCurrency(totalEmprestado)],
       ['Patrimônio', formatCurrency(valorPatrimonio)],
       ['Produções registradas', data.producoes.length.toString()],
     ],

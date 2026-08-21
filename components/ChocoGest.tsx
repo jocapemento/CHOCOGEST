@@ -32,8 +32,10 @@ import {
   referenciaQuitacao,
   resolverCartaoPorId,
   saldoDevedorCartao,
+  saldoDevedorTotal,
   STATUS_EMPRESTIMO_LABEL,
   totalEmprestadoCartao,
+  totalEmprestadoGeral,
   totalQuitadoCartao,
   totalQuitadoCompra,
   totalParcelasCartao,
@@ -2125,6 +2127,15 @@ export default function ChocoGest() {
                   },
                   { label: 'Saldo Caixa', value: formatCurrency(saldoCaixa), icon: '💰' },
                   { label: 'Saldo Banco', value: formatCurrency(saldoBanco), icon: '🏦' },
+                  {
+                    label: 'Empréstimos',
+                    value: formatCurrency(saldoDevedorTotal(emprestimosCartao)),
+                    icon: '💳',
+                    detalhe:
+                      emprestimosAbertos.length > 0
+                        ? `${emprestimosAbertos.length} em aberto · total ${formatCurrency(totalEmprestadoGeral(emprestimosCartao))}`
+                        : 'nenhum em aberto',
+                  },
                   { label: 'Patrimônio', value: formatCurrency(valorPatrimonio), icon: '🏛️' },
                   { label: 'Compras', value: formatCurrency(sumBy(data.compras, (c) => c.total)), icon: '🚚' },
                   { label: 'Produções', value: data.producoes.length.toString(), icon: '🏭' },

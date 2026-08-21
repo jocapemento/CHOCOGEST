@@ -309,6 +309,14 @@ export function totalQuitadoCartao(emprestimos: EmprestimoCartao[], cartao: stri
   );
 }
 
+export function saldoDevedorTotal(emprestimos: EmprestimoCartao[]): number {
+  return arredondarDinheiro(emprestimos.reduce((acc, e) => acc + e.saldo, 0));
+}
+
+export function totalEmprestadoGeral(emprestimos: EmprestimoCartao[]): number {
+  return arredondarDinheiro(emprestimos.reduce((acc, e) => acc + e.total, 0));
+}
+
 /**
  * Parcelas ainda em aberto: quitações abatem as parcelas mais antigas de cada empréstimo.
  */
