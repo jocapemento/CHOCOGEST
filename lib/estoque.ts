@@ -1,4 +1,4 @@
-import { ehMateriaPrimaCadeia, tipoEstoqueCadeia } from '@/lib/cadeia-producao';
+import { ehInsumoEnergia, ehMateriaPrimaCadeia, tipoEstoqueCadeia } from '@/lib/cadeia-producao';
 import type {
   Compra,
   EstoqueItem,
@@ -193,7 +193,48 @@ export function saldoIngredienteProducao(
 }
 
 export interface IngredienteProducaoDisponivel extends SaldoEstoque {
-  origem: 'compra' | 'producao';
+  origem: 'compra' | 'producao' | 'energia';
+}
+
+const ORDEM_ORIGEM_INSUMO: Record<IngredienteProducaoDisponivel['origem'], number> = {
+  compra: 0,
+  producao: 1,
+  energia: 2,
+};
+
+/** Energia (gás) entra no custo do lote, mas não na perda de massa. */
+export function ehInsumoCustoProducao(ingrediente: {
+  nome: string;
+  tipo?: TipoItem;
+}): boolean {
+  if (ehInsumoEnergia(ingrediente.nome)) return true;
+  return ingrediente.tipo === 'Energia';
+}
+
+export function ingredientesMassaProducao(
+  ingredientes: Producao['ingredientes']
+): Producao['ingredientes'] {
+  return ingredientes.filter((ing) => !ehInsumoCustoProducao(ing));
+}
+
+export function insumosEnergiaProducao(
+  ingredientes: Producao['ingredientes']
+): Producao['ingredientes'] {
+  return ingredientes.filter((ing) => ehInsumoCustoProducao(ing));
+}
+
+export function custoItensProducao(
+  itens: Array<{ quantidade: number; valorUnit: number }>
+): number {
+  return itens.reduce((acc, i) => acc + i.quantidade * i.valorUnit, 0);
+}
+
+export function custoMassaProducao(ingredientes: Producao['ingredientes']): number {
+  return custoItensProducao(ingredientesMassaProducao(ingredientes));
+}
+
+export function custoEnergiaProducao(ingredientes: Producao['ingredientes']): number {
+  return custoItensProducao(insumosEnergiaProducao(ingredientes));
 }
 
 export function ingredientesProducaoDisponiveis(
@@ -205,15 +246,21 @@ export function ingredientesProducaoDisponiveis(
   return agruparEstoquePorNomeTipo(estoque)
     .filter((s) => {
       if (s.quantidade <= 0) return false;
-      if (s.tipo === 'MateriaPrima') return true;
+      if (s.tipo === 'MateriaPrima' || s.tipo === 'Energia') return true;
       return s.tipo === 'ProdutoAcabado' && nomesProduzidos.has(s.nome.toLowerCase());
     })
     .map((s) => ({
       ...s,
-      origem: s.tipo === 'ProdutoAcabado' ? ('producao' as const) : ('compra' as const),
+      origem:
+        s.tipo === 'Energia'
+          ? ('energia' as const)
+          : s.tipo === 'ProdutoAcabado'
+            ? ('producao' as const)
+            : ('compra' as const),
     }))
     .sort((a, b) => {
-      if (a.origem !== b.origem) return a.origem === 'compra' ? -1 : 1;
+      const origemCmp = ORDEM_ORIGEM_INSUMO[a.origem] - ORDEM_ORIGEM_INSUMO[b.origem];
+      if (origemCmp !== 0) return origemCmp;
       return a.nome.localeCompare(b.nome, 'pt-BR');
     });
 }
@@ -232,7 +279,7 @@ export function validarIngredientesProducao(
     if (!saldo || saldo.quantidade <= 0) {
       const lista =
         disponiveis.length > 0
-          ? `\n\nIngredientes disponíveis:\n${disponiveis.map((d) => `  — ${d.nome}${d.origem === 'producao' ? ' (produzido)' : ''}`).join('\n')}`
+          ? `\n\nIngredientes disponíveis:\n${disponiveis.map((d) => `  — ${d.nome}${d.origem === 'producao' ? ' (produzido)' : d.origem === 'energia' ? ' (gás)' : ''}`).join('\n')}`
           : '\n\nNenhum ingrediente com saldo no estoque.';
       return `Ingrediente "${ing.nome}" não existe no estoque.${lista}`;
     }
@@ -260,6 +307,7 @@ export interface ItemCatalogo {
 
 const ITENS_CONHECIDOS_ESTOQUE: ItemCatalogo[] = [
   { nome: 'Amêndoa Torrada', tipo: 'MateriaPrima', unidade: 'kg', valorUnit: 0 },
+  { nome: 'Gás de Cozinha', tipo: 'Energia', unidade: 'kg', valorUnit: 0 },
 ];
 
 export function catalogoItensLancados(compras: Compra[], estoque: EstoqueItem[]): ItemCatalogo[] {
@@ -305,15 +353,16 @@ export function catalogoItensLancados(compras: Compra[], estoque: EstoqueItem[])
 export function totalEntradaIngredientes(
   ingredientes: Producao['ingredientes']
 ): { total: number; unidade: string } | null {
-  if (ingredientes.length === 0) return null;
+  const massa = ingredientesMassaProducao(ingredientes);
+  if (massa.length === 0) return null;
 
-  const unidade = ingredientes[0].unidade ?? 'kg';
-  for (const ing of ingredientes) {
+  const unidade = massa[0].unidade ?? 'kg';
+  for (const ing of massa) {
     const u = ing.unidade ?? 'kg';
     if (u.toLowerCase() !== unidade.toLowerCase()) return null;
   }
 
-  const total = ingredientes.reduce((acc, ing) => acc + ing.quantidade, 0);
+  const total = massa.reduce((acc, ing) => acc + ing.quantidade, 0);
   return { total, unidade };
 }
 
@@ -369,7 +418,7 @@ export function totalSaidaProdutos(
   return { total, unidade };
 }
 
-/** Rateia o custo total dos ingredientes por massa entre os produtos de saída. */
+/** Rateia o custo total do lote (matéria-prima + gás) por massa entre os produtos de saída. */
 export function alocarCustoEntreProdutos(
   custoTotal: number,
   produtos: ProdutoGeradoProducao[]
@@ -505,6 +554,18 @@ export function filtrarSaldoProdutosGerados(
 export function filtrarLancamentosMateriaPrima(estoque: EstoqueItem[]): EstoqueItem[] {
   return estoque
     .filter((e) => e.quantidade > 0 && e.tipo === 'MateriaPrima')
+    .sort((a, b) => (b.data ?? '').localeCompare(a.data ?? '') || b.id - a.id);
+}
+
+export function filtrarSaldoEnergia(saldo: SaldoEstoque[]): SaldoEstoque[] {
+  return saldo
+    .filter((s) => s.tipo === 'Energia')
+    .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+}
+
+export function filtrarLancamentosEnergia(estoque: EstoqueItem[]): EstoqueItem[] {
+  return estoque
+    .filter((e) => e.quantidade > 0 && e.tipo === 'Energia')
     .sort((a, b) => (b.data ?? '').localeCompare(a.data ?? '') || b.id - a.id);
 }
 

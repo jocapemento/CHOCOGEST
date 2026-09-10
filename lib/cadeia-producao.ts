@@ -58,6 +58,37 @@ export function produtosDaCadeia(): string[] {
 
 const ALIASES_MATERIA_PRIMA = new Set(['amêndoa torrada', 'amendoa torrada']);
 
+function normalizarNomeItem(nome: string): string {
+  return nome
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+}
+
+const ALIASES_ENERGIA = new Set([
+  'gas',
+  'gas de cozinha',
+  'gas cozinha',
+  'glp',
+  'botijao',
+  'botijao de gas',
+  'botijao 13kg',
+  'botijao p13',
+  'gas glp',
+]);
+
+/** Gás de cozinha (GLP) e equivalentes — insumo de energia da produção. */
+export function ehInsumoEnergia(nome: string): boolean {
+  const key = normalizarNomeItem(nome);
+  if (!key) return false;
+  if (ALIASES_ENERGIA.has(key)) return true;
+  if (key.includes('gas de cozinha') || key.includes('gas cozinha')) return true;
+  if (/\bbotijao\b/.test(key)) return true;
+  if (/\bglp\b/.test(key)) return true;
+  return /^gas\b/.test(key);
+}
+
 /** Insumos da cadeia que entram no estoque como matéria-prima (compra ou torra). */
 export function ehMateriaPrimaCadeia(nome: string): boolean {
   return ALIASES_MATERIA_PRIMA.has(nome.trim().toLowerCase());
@@ -73,13 +104,15 @@ export function ehProdutoGeradoCadeia(nome: string): boolean {
 export function tipoEstoqueCadeia(nome: string, fallback: TipoItem = 'ProdutoAcabado'): TipoItem {
   if (ehMateriaPrimaCadeia(nome)) return 'MateriaPrima';
   if (ehProdutoGeradoCadeia(nome)) return 'ProdutoAcabado';
+  if (ehInsumoEnergia(nome)) return 'Energia';
   return fallback ?? 'MateriaPrima';
 }
 
-/** Tipo imposto pela cadeia, ou null quando o usuário pode escolher. */
+/** Tipo imposto pela cadeia/insumo conhecido, ou null quando o usuário pode escolher. */
 export function tipoCadeiaFixo(nome: string): TipoItem | null {
   if (ehMateriaPrimaCadeia(nome)) return 'MateriaPrima';
   if (ehProdutoGeradoCadeia(nome)) return 'ProdutoAcabado';
+  if (ehInsumoEnergia(nome)) return 'Energia';
   return null;
 }
 

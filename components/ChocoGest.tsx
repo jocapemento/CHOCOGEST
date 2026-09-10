@@ -58,11 +58,17 @@ import {
   catalogoItensLancados,
   catalogoNomesProdutos,
   catalogoProdutosProduzidos,
+  custoEnergiaProducao,
+  custoMassaProducao,
+  filtrarLancamentosEnergia,
   filtrarLancamentosMateriaPrima,
   filtrarLancamentosProdutosGerados,
+  filtrarSaldoEnergia,
   filtrarSaldoMateriaPrima,
   filtrarSaldoProdutosGerados,
+  ingredientesMassaProducao,
   ingredientesProducaoDisponiveis,
+  insumosEnergiaProducao,
   montarProducaoComProdutos,
   produtosDaProducao,
   quantidadeDisponivel,
@@ -793,7 +799,18 @@ export default function ChocoGest() {
     [primeiroProdutoNome]
   );
   const coprodutosDoLote = useMemo(
-    () => coprodutosSugeridosParaIngredientes(novaProducao.ingredientes.map((i) => i.nome)),
+    () =>
+      coprodutosSugeridosParaIngredientes(
+        ingredientesMassaProducao(novaProducao.ingredientes).map((i) => i.nome)
+      ),
+    [novaProducao.ingredientes]
+  );
+  const custoMassaForm = useMemo(
+    () => custoMassaProducao(novaProducao.ingredientes),
+    [novaProducao.ingredientes]
+  );
+  const custoGasForm = useMemo(
+    () => custoEnergiaProducao(novaProducao.ingredientes),
     [novaProducao.ingredientes]
   );
 
@@ -1286,7 +1303,7 @@ export default function ChocoGest() {
       const atual = prev.vendas.find((v) => v.id === id);
       if (!atual || isVendaConcluida(atual)) return prev;
       const concluida: Venda = { ...atual, status: 'concluida' };
-      let state = aplicarEfeitosVenda(prev, concluida, concluida.data);
+      const state = aplicarEfeitosVenda(prev, concluida, concluida.data);
       return {
         ...state,
         vendas: state.vendas.map((v) => (v.id === id ? concluida : v)),
@@ -1301,7 +1318,7 @@ export default function ChocoGest() {
     const item = ingredientesDisponiveis.find((i) => i.nome === ingredienteForm.nome);
     if (!item) {
       return alert(
-        'Ingrediente inválido. Selecione uma matéria-prima ou produto intermediário com saldo no estoque.'
+        'Ingrediente inválido. Selecione uma matéria-prima, produto intermediário ou gás de cozinha com saldo no estoque.'
       );
     }
     if (ingredienteForm.quantidade <= 0) {
@@ -1317,11 +1334,16 @@ export default function ChocoGest() {
         ...p.ingredientes,
         { ...ingredienteForm, unidade: item.unidade, tipo: item.tipo },
       ];
-      const unidade = p.ingredientes.length === 0 ? item.unidade : (p.produtos[0]?.unidade || item.unidade);
+      const massa = ingredientesMassaProducao(ingredientes);
+      const unidade = massa[0]?.unidade || p.produtos[0]?.unidade || 'kg';
       return {
         ...p,
         ingredientes,
-        produtos: preencherProdutosComCoprodutos(p.produtos, ingredientes.map((i) => i.nome), unidade),
+        produtos: preencherProdutosComCoprodutos(
+          p.produtos,
+          massa.map((i) => i.nome),
+          unidade
+        ),
       };
     });
     setIngredienteForm({ nome: '', quantidade: 0, valorUnit: 0 });
@@ -1348,7 +1370,10 @@ export default function ChocoGest() {
         ...p.produtos,
         {
           ...PRODUTO_SAIDA_INICIAL,
-          unidade: p.produtos[0]?.unidade || p.ingredientes[0]?.unidade || 'kg',
+          unidade:
+            p.produtos[0]?.unidade ||
+            ingredientesMassaProducao(p.ingredientes)[0]?.unidade ||
+            'kg',
         },
       ],
     }));
@@ -1466,7 +1491,7 @@ export default function ChocoGest() {
 
     const editando = producaoEditandoId !== null;
     const coprodutos = coprodutosSugeridosParaIngredientes(
-      novaProducao.ingredientes.map((i) => i.nome)
+      ingredientesMassaProducao(novaProducao.ingredientes).map((i) => i.nome)
     );
     if (!editando && coprodutos.length >= 2) {
       if (produtosPreenchidos.length < 2) {
@@ -1487,6 +1512,11 @@ export default function ChocoGest() {
       produtos: produtosPreenchidos,
     });
     if (!perdaCalculada) {
+      if (ingredientesMassaProducao(novaProducao.ingredientes).length === 0) {
+        return alert(
+          'Informe a matéria-prima do lote. O gás de cozinha entra no custo, mas não substitui a matéria-prima.'
+        );
+      }
       return alert(
         'Não foi possível calcular a perda. Use a mesma unidade na matéria-prima e em todos os produtos gerados.'
       );
@@ -1930,11 +1960,14 @@ export default function ChocoGest() {
   const saldoEstoque = agruparEstoque(data.estoque);
   const saldoMateriaPrima = filtrarSaldoMateriaPrima(saldoEstoque);
   const saldoProdutosGerados = filtrarSaldoProdutosGerados(saldoEstoque, data.producoes);
+  const saldoEnergia = filtrarSaldoEnergia(saldoEstoque);
   const valorMateriaPrima = sumBy(saldoMateriaPrima, (i) => i.quantidade * i.valorUnit);
   const valorProdutosGerados = sumBy(saldoProdutosGerados, (i) => i.quantidade * i.valorUnit);
-  const valorEstoque = valorMateriaPrima + valorProdutosGerados;
+  const valorEnergia = sumBy(saldoEnergia, (i) => i.quantidade * i.valorUnit);
+  const valorEstoque = valorMateriaPrima + valorProdutosGerados + valorEnergia;
   const lancamentosMateriaPrima = filtrarLancamentosMateriaPrima(data.estoque);
   const lancamentosProdutosGerados = filtrarLancamentosProdutosGerados(data.estoque, data.producoes);
+  const lancamentosEnergia = filtrarLancamentosEnergia(data.estoque);
   const saldoCaixa = calcSaldo(data.movimentosCaixa);
   const saldoBanco = calcSaldo(data.movimentosBanco);
   const valorPatrimonio = sumBy(data.patrimonio, (p) => p.valorAtual);
@@ -2097,6 +2130,15 @@ export default function ChocoGest() {
                   { label: 'Matéria-Prima', value: formatCurrency(valorMateriaPrima), icon: '🌰', detalhe: `${saldoMateriaPrima.length} itens` },
                   { label: 'Produtos Gerados', value: formatCurrency(valorProdutosGerados), icon: '🍫', detalhe: `${saldoProdutosGerados.length} itens` },
                   {
+                    label: 'Gás de Cozinha',
+                    value: formatCurrency(valorEnergia),
+                    icon: '🔥',
+                    detalhe:
+                      saldoEnergia.length > 0
+                        ? saldoEnergia.map((i) => `${i.quantidade} ${i.unidade}`).join(' · ')
+                        : 'sem saldo — compre como Energia',
+                  },
+                  {
                     label: 'Valor Potencial Venda',
                     value: formatCurrency(resumoPrecificacaoDashboard.totais.valorVendaTotal),
                     icon: '🏷️',
@@ -2191,6 +2233,29 @@ export default function ChocoGest() {
                     </div>
                   ) : (
                     <p className="text-amber-400/60 text-sm">Nenhum produto gerado em estoque.</p>
+                  )}
+                </Card>
+                <Card>
+                  <h3 className="font-semibold text-amber-200 mb-3">Gás de cozinha em estoque</h3>
+                  {saldoEnergia.length > 0 ? (
+                    <div className="space-y-2 text-sm">
+                      {saldoEnergia.map((item) => (
+                        <div key={`${item.nome}-${item.tipo}`} className="flex justify-between py-2 border-b border-amber-800/30">
+                          <span>{item.nome}</span>
+                          <span className="text-amber-300">
+                            {item.quantidade} {item.unidade} — {formatCurrency(item.quantidade * item.valorUnit)}
+                          </span>
+                        </div>
+                      ))}
+                      <div className="flex justify-between pt-2 font-semibold text-amber-100">
+                        <span>Total</span>
+                        <span>{formatCurrency(valorEnergia)}</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-amber-400/60 text-sm">
+                      Nenhum gás em estoque. Compre como Energia para incluir o custo na produção.
+                    </p>
                   )}
                 </Card>
               </div>
@@ -2393,6 +2458,7 @@ export default function ChocoGest() {
                 <p className="text-amber-400/70 text-xs mt-2">
                   Cada inclusão gera um lançamento na lista. O saldo disponível é a soma dos lançamentos por item.
                   Amêndoa Torrada entra como matéria-prima e aparece em Matérias-primas; na produção gera Nibs e Casca.
+                  Gás de Cozinha entra como Energia e aparece em Gás de cozinha; na produção entra no custo do lote.
                   {estoqueEditandoId !== null && ' Use Editar na tabela abaixo para corrigir quantidades de lançamentos existentes.'}
                 </p>
                 <div className="flex flex-wrap gap-2 mt-4">
@@ -2475,7 +2541,46 @@ export default function ChocoGest() {
                 </div>
                 <p className="text-amber-400/70 text-xs mt-3">
                   Valor total operacional: <strong>{formatCurrency(valorEstoque)}</strong>
+                  {valorEnergia > 0 && (
+                    <> (inclui {formatCurrency(valorEnergia)} de gás)</>
+                  )}
                 </p>
+              </Card>
+              <Card className="mb-6">
+                <h4 className="text-amber-200 font-medium mb-4">Saldo — Gás de cozinha</h4>
+                <div className="table-scroll">
+                  <table className="w-full text-sm min-w-[520px]">
+                    <thead>
+                      <tr className="text-amber-300 border-b border-amber-700">
+                        <th className="text-left py-2">Nome</th>
+                        <th className="text-right py-2">Qtd Total</th>
+                        <th className="text-right py-2">Valor Médio</th>
+                        <th className="text-right py-2">Total</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {saldoEnergia.map((item) => (
+                        <tr key={`${item.nome}-${item.tipo}`} className="border-b border-amber-800/30">
+                          <td className="py-2">{item.nome}</td>
+                          <td className="py-2 text-right">{item.quantidade} {item.unidade}</td>
+                          <td className="py-2 text-right">{formatCurrency(item.valorUnit)}</td>
+                          <td className="py-2 text-right">{formatCurrency(item.quantidade * item.valorUnit)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="font-bold text-amber-100">
+                        <td colSpan={3} className="py-3 text-right">Total gás de cozinha:</td>
+                        <td className="py-3 text-right">{formatCurrency(valorEnergia)}</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                  {saldoEnergia.length === 0 && (
+                    <p className="text-amber-400/60 py-4">
+                      Nenhum gás em estoque. Lance a compra como Energia (Gás de Cozinha).
+                    </p>
+                  )}
+                </div>
               </Card>
               <Card className="mb-6">
                 <h4 className="text-amber-200 font-medium mb-4">Lançamentos — Matérias-primas</h4>
@@ -2557,6 +2662,46 @@ export default function ChocoGest() {
                   )}
                 </div>
               </Card>
+              <Card className="mt-6">
+                <h4 className="text-amber-200 font-medium mb-4">Lançamentos — Gás de cozinha</h4>
+                <div className="table-scroll">
+                  <table className="w-full text-sm min-w-[600px]">
+                    <thead>
+                      <tr className="text-amber-300 border-b border-amber-700">
+                        <th className="text-left py-2">Data</th>
+                        <th className="text-left py-2">Nome</th>
+                        <th className="text-right py-2">Qtd</th>
+                        <th className="text-right py-2">Valor Unit.</th>
+                        <th className="text-right py-2">Total</th>
+                        <th className="py-2"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {lancamentosEnergia.map((item) => (
+                        <tr
+                          key={item.id}
+                          className={`border-b border-amber-800/30 ${estoqueEditandoId === item.id ? 'bg-amber-900/30' : ''}`}
+                        >
+                          <td className="py-2 text-amber-300">{formatDate(item.data ?? '')}</td>
+                          <td className="py-2">{item.nome}</td>
+                          <td className="py-2 text-right">{item.quantidade} {item.unidade}</td>
+                          <td className="py-2 text-right">{formatCurrency(item.valorUnit)}</td>
+                          <td className="py-2 text-right">{formatCurrency(item.quantidade * item.valorUnit)}</td>
+                          <td className="py-2 text-right">
+                            <div className="flex justify-end gap-2">
+                              <Btn variant="secondary" onClick={() => editarItemEstoque(item)}>Editar</Btn>
+                              <Btn variant="danger" onClick={() => removerItemEstoque(item.id)}>✕</Btn>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {lancamentosEnergia.length === 0 && (
+                    <p className="text-amber-400/60 py-4">Nenhum lançamento de gás de cozinha.</p>
+                  )}
+                </div>
+              </Card>
             </div>
           )}
 
@@ -2618,6 +2763,7 @@ export default function ChocoGest() {
                 <p className="text-amber-400/70 text-xs mb-2">
                   Preencha os campos abaixo. Use &quot;+ Item&quot; para adicionar vários, ou &quot;Registrar Compra&quot; para incluir o item atual automaticamente.
                   Itens do tipo <strong>Equipamento</strong> vão para o Patrimônio (não para o Estoque).
+                  <strong>Gás de Cozinha</strong> entra como Energia e depois pode ser usado na Produção (custo do lote).
                   Compra no cartão entra como <strong>empréstimo</strong>; o dinheiro sai na <strong>quitação</strong> (aba Cartões).
                 </p>
                 <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-3">
@@ -3206,6 +3352,7 @@ export default function ChocoGest() {
                 <h4 className="text-amber-200 mb-2">1. Ingredientes (entrada)</h4>
                 <p className="text-amber-400/70 text-xs mb-3">
                   Use matérias-primas (ex.: Amêndoa Torrada gera Nibs e Casca no mesmo lote) ou produtos intermediários já produzidos.
+                  O <strong>gás de cozinha</strong> também pode ser lançado: entra no custo do lote e é baixado do estoque, sem afetar o cálculo de perda.
                 </p>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
                   <Field label="Ingrediente">
@@ -3236,6 +3383,17 @@ export default function ChocoGest() {
                             ))}
                         </optgroup>
                       )}
+                      {ingredientesDisponiveis.some((e) => e.origem === 'energia') && (
+                        <optgroup label="Energia (gás de cozinha)">
+                          {ingredientesDisponiveis
+                            .filter((e) => e.origem === 'energia')
+                            .map((e) => (
+                              <option key={`en-${e.nome}`} value={e.nome}>
+                                {e.nome} ({e.quantidade} {e.unidade})
+                              </option>
+                            ))}
+                        </optgroup>
+                      )}
                     </select>
                   </Field>
                   <Field label="Quantidade">
@@ -3252,12 +3410,33 @@ export default function ChocoGest() {
                       <div key={idx} className="flex justify-between items-center text-amber-200 gap-2">
                         <span>
                           {ing.nome}
-                          {ing.tipo === 'ProdutoAcabado' ? ' (intermediário)' : ''}: {ing.quantidade}{' '}
+                          {ing.tipo === 'Energia'
+                            ? ' (gás)'
+                            : ing.tipo === 'ProdutoAcabado'
+                              ? ' (intermediário)'
+                              : ''}
+                          : {ing.quantidade}{' '}
                           {ing.unidade ?? 'kg'} — {formatCurrency(ing.quantidade * ing.valorUnit)}
                         </span>
                         <Btn variant="danger" className="px-2 py-1" onClick={() => removerIngredienteLista(idx)}>✕</Btn>
                       </div>
                     ))}
+                    <div className="pt-2 space-y-0.5 text-amber-100">
+                      <div className="flex justify-between gap-2">
+                        <span>Custo da matéria-prima</span>
+                        <span>{formatCurrency(custoMassaForm)}</span>
+                      </div>
+                      {insumosEnergiaProducao(novaProducao.ingredientes).length > 0 && (
+                        <div className="flex justify-between gap-2 text-amber-200">
+                          <span>Custo do gás de cozinha</span>
+                          <span>{formatCurrency(custoGasForm)}</span>
+                        </div>
+                      )}
+                      <div className="flex justify-between gap-2 font-semibold">
+                        <span>Custo total do lote</span>
+                        <span>{formatCurrency(custoMassaForm + custoGasForm)}</span>
+                      </div>
+                    </div>
                   </div>
                 )}
 
@@ -3353,7 +3532,9 @@ export default function ChocoGest() {
                 {novaProducao.ingredientes.length > 0 &&
                   !totalEntradaIngredientes(novaProducao.ingredientes) && (
                     <p className="text-sm text-amber-400 mb-4">
-                      Para calcular a perda, todos os ingredientes devem usar a mesma unidade.
+                      {ingredientesMassaProducao(novaProducao.ingredientes).length === 0
+                        ? 'Informe também a matéria-prima do lote. O gás entra no custo, mas a perda é calculada pela massa.'
+                        : 'Para calcular a perda, as matérias-primas devem usar a mesma unidade dos produtos gerados.'}
                     </p>
                   )}
 
@@ -3402,7 +3583,14 @@ export default function ChocoGest() {
                               '—'
                             )}
                           </td>
-                          <td className="py-2 text-right">{formatCurrency(p.custoEstimado)}</td>
+                          <td className="py-2 text-right">
+                            {formatCurrency(p.custoEstimado)}
+                            {custoEnergiaProducao(p.ingredientes) > 0 && (
+                              <span className="block text-xs text-amber-400/60">
+                                incl. {formatCurrency(custoEnergiaProducao(p.ingredientes))} de gás
+                              </span>
+                            )}
+                          </td>
                           <td className="py-2 text-right whitespace-nowrap">
                             <Btn variant="secondary" onClick={() => editarProducao(p)}>Editar</Btn>
                             {' '}
