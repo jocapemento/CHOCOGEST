@@ -164,30 +164,25 @@ export interface LinhaProdutoSaida {
 }
 
 /**
- * Se o insumo gera co-produtos (Amêndoa Torrada → Nibs + Casca), preenche as linhas
- * de saída — sem sobrescrever produtos que o usuário já digitou fora da sugestão.
+ * Se o insumo sugere co-produtos (Amêndoa Torrada → Nibs + Casca), preenche linhas
+ * vazias já existentes — sem abrir linhas extras nem sobrescrever o que o usuário digitou.
+ * Um produto gerado basta; o segundo só entra se o usuário adicionar a linha.
  */
 export function preencherProdutosComCoprodutos(
   atuais: LinhaProdutoSaida[],
   nomesIngredientes: string[],
   unidade: string
 ): LinhaProdutoSaida[] {
+  const linhas = atuais.length > 0 ? atuais : [{ nome: '', quantidade: 0, unidade }];
   const sugeridos = coprodutosSugeridosParaIngredientes(nomesIngredientes);
-  if (sugeridos.length === 0) {
-    return atuais.length > 0 ? atuais : [{ nome: '', quantidade: 0, unidade }];
-  }
+  if (sugeridos.length === 0) return linhas;
 
-  const comNome = atuais.filter((p) => p.nome.trim());
-  const sugeridosKey = new Set(sugeridos.map((n) => n.toLowerCase()));
-  const soVazios = comNome.length === 0;
-  const soSugeridos = comNome.every((p) => sugeridosKey.has(p.nome.trim().toLowerCase()));
-  if (!soVazios && !soSugeridos) return atuais;
+  const comNome = linhas.filter((p) => p.nome.trim());
+  if (comNome.length > 0) return linhas;
 
-  const existentes = new Map(comNome.map((p) => [p.nome.trim().toLowerCase(), p] as const));
-  return sugeridos.map((nome) => {
-    const prev = existentes.get(nome.toLowerCase());
-    return prev
-      ? { ...prev, nome, unidade: prev.unidade || unidade }
-      : { nome, quantidade: 0, unidade };
-  });
+  return linhas.map((linha, idx) => ({
+    ...linha,
+    nome: sugeridos[idx] ?? linha.nome,
+    unidade: linha.unidade || unidade,
+  }));
 }

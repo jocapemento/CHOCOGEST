@@ -1490,22 +1490,6 @@ export default function ChocoGest() {
     }
 
     const editando = producaoEditandoId !== null;
-    const coprodutos = coprodutosSugeridosParaIngredientes(
-      ingredientesMassaProducao(novaProducao.ingredientes).map((i) => i.nome)
-    );
-    if (!editando && coprodutos.length >= 2) {
-      if (produtosPreenchidos.length < 2) {
-        return alert(
-          `A quebra da Amêndoa Torrada gera mais de um produto (${coprodutos.join(' e ')}). Informe a quantidade de cada um.`
-        );
-      }
-      const faltando = coprodutos.filter(
-        (nome) => !nomesSaida.has(nome.toLowerCase())
-      );
-      if (faltando.length > 0) {
-        return alert(`Informe também a quantidade de: ${faltando.join(', ')}.`);
-      }
-    }
 
     const perdaCalculada = calcularPerdaProducao({
       ingredientes: novaProducao.ingredientes,
@@ -3351,7 +3335,8 @@ export default function ChocoGest() {
 
                 <h4 className="text-amber-200 mb-2">1. Ingredientes (entrada)</h4>
                 <p className="text-amber-400/70 text-xs mb-3">
-                  Use matérias-primas (ex.: Amêndoa Torrada gera Nibs e Casca no mesmo lote) ou produtos intermediários já produzidos.
+                  Use matérias-primas (ex.: Amêndoa Torrada) ou produtos intermediários já produzidos.
+                  Um produto gerado já basta; Nibs e Casca podem ir no mesmo lote se você adicionar os dois.
                   O <strong>gás de cozinha</strong> também pode ser lançado: entra no custo do lote e é baixado do estoque, sem afetar o cálculo de perda.
                 </p>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
@@ -3443,8 +3428,8 @@ export default function ChocoGest() {
                 <h4 className="text-amber-200 mb-2">2. Produtos gerados (saída)</h4>
                 {coprodutosDoLote.length >= 2 && (
                   <p className="text-amber-400/80 text-xs mb-3">
-                    A quebra da Amêndoa Torrada gera <strong>{coprodutosDoLote.join(' e ')}</strong> no mesmo lote.
-                    Informe a quantidade de cada um.
+                    A quebra da Amêndoa Torrada pode gerar <strong>{coprodutosDoLote.join(' e ')}</strong> no mesmo lote.
+                    Um produto já basta; use + Produto gerado se quiser lançar os dois.
                   </p>
                 )}
                 {coprodutosDoLote.length < 2 && ingredientesSugeridos.length > 0 && (

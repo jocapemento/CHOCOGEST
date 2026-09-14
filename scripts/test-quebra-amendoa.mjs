@@ -1,4 +1,4 @@
-/** Quebra de Amêndoa Torrada gera Nibs e Casca no mesmo lote. */
+/** Quebra de Amêndoa Torrada sugere Nibs e Casca, mas um produto gerado já basta. */
 
 const COPRODUTOS_POR_INGREDIENTE = {
   'amêndoa torrada': ['Nibs', 'Casca'],
@@ -17,22 +17,16 @@ function coprodutosSugeridosParaIngredientes(nomesIngredientes) {
 }
 
 function preencherProdutosComCoprodutos(atuais, nomesIngredientes, unidade) {
+  const linhas = atuais.length > 0 ? atuais : [{ nome: '', quantidade: 0, unidade }];
   const sugeridos = coprodutosSugeridosParaIngredientes(nomesIngredientes);
-  if (sugeridos.length === 0) {
-    return atuais.length > 0 ? atuais : [{ nome: '', quantidade: 0, unidade }];
-  }
-  const comNome = atuais.filter((p) => p.nome.trim());
-  const sugeridosKey = new Set(sugeridos.map((n) => n.toLowerCase()));
-  const soVazios = comNome.length === 0;
-  const soSugeridos = comNome.every((p) => sugeridosKey.has(p.nome.trim().toLowerCase()));
-  if (!soVazios && !soSugeridos) return atuais;
-  const existentes = new Map(comNome.map((p) => [p.nome.trim().toLowerCase(), p]));
-  return sugeridos.map((nome) => {
-    const prev = existentes.get(nome.toLowerCase());
-    return prev
-      ? { ...prev, nome, unidade: prev.unidade || unidade }
-      : { nome, quantidade: 0, unidade };
-  });
+  if (sugeridos.length === 0) return linhas;
+  const comNome = linhas.filter((p) => p.nome.trim());
+  if (comNome.length > 0) return linhas;
+  return linhas.map((linha, idx) => ({
+    ...linha,
+    nome: sugeridos[idx] ?? linha.nome,
+    unidade: linha.unidade || unidade,
+  }));
 }
 
 function arredondar(valor) {
@@ -65,16 +59,28 @@ const preenchido = preencherProdutosComCoprodutos(
   ['Amêndoa Torrada'],
   'kg'
 );
-assert(preenchido.length === 2, 'formulário abre duas linhas');
-assert(preenchido[0].nome === 'Nibs' && preenchido[1].nome === 'Casca', 'linhas Nibs e Casca');
+assert(preenchido.length === 1, 'formulário permanece com uma linha');
+assert(preenchido[0].nome === 'Nibs', 'sugere Nibs na linha existente');
+
+const duasLinhas = preencherProdutosComCoprodutos(
+  [
+    { nome: '', quantidade: 0, unidade: 'kg' },
+    { nome: '', quantidade: 0, unidade: 'kg' },
+  ],
+  ['Amêndoa Torrada'],
+  'kg'
+);
+assert(duasLinhas.length === 2, 'respeita as duas linhas que o usuário abriu');
+assert(duasLinhas[0].nome === 'Nibs' && duasLinhas[1].nome === 'Casca', 'preenche Nibs e Casca nas linhas vazias');
 
 const comNibs = preencherProdutosComCoprodutos(
   [{ nome: 'Nibs', quantidade: 10, unidade: 'kg' }],
   ['Amêndoa Torrada'],
   'kg'
 );
+assert(comNibs.length === 1, 'não força um segundo produto');
 assert(comNibs.find((p) => p.nome === 'Nibs')?.quantidade === 10, 'mantém quantidade já digitada de Nibs');
-assert(comNibs.some((p) => p.nome === 'Casca'), 'completa Casca');
+assert(!comNibs.some((p) => p.nome === 'Casca'), 'não completa Casca automaticamente');
 
 const outro = preencherProdutosComCoprodutos(
   [{ nome: 'Chocolate 100%', quantidade: 2, unidade: 'kg' }],
@@ -99,4 +105,4 @@ if (fails.length) {
   process.exit(1);
 }
 
-console.log('✓ Quebra de Amêndoa Torrada gera Nibs + Casca no mesmo lote');
+console.log('✓ Quebra de Amêndoa Torrada sugere Nibs + Casca, com um produto gerado opcional');
