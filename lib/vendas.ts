@@ -1,4 +1,5 @@
 import { quantidadeDisponivel } from '@/lib/estoque';
+import { arredondarQuantidade, formatQuantidade, formatQuantidadeUnidade } from '@/lib/format';
 import type { EstoqueItem, ItemMovimentacao, StatusVenda, Venda } from '@/lib/types';
 
 export const STATUS_VENDA_LABEL: Record<StatusVenda, string> = {
@@ -16,7 +17,7 @@ export function isVendaPendente(venda: Venda): boolean {
 
 export function formatarItensVenda(itens: ItemMovimentacao[]): string {
   if (itens.length === 0) return '—';
-  return itens.map((i) => `${i.nome} — ${i.quantidade} ${i.unidade}`).join('; ');
+  return itens.map((i) => `${i.nome} — ${formatQuantidadeUnidade(i.quantidade, i.unidade)}`).join('; ');
 }
 
 export function totalQuantidadeVenda(itens: ItemMovimentacao[]): number {
@@ -91,7 +92,7 @@ export function saldoLivreParaVenda(
 ): number {
   const fisico = quantidadeDisponivel(estoque, produto);
   const reservado = quantidadeReservadaProduto(vendas, produto, ignorarVendaId);
-  return Math.max(0, Math.round((fisico - reservado) * 1000) / 1000);
+  return Math.max(0, arredondarQuantidade(fisico - reservado));
 }
 
 /** Demanda por produto nas vendas pendentes (relação de reservas). */
@@ -122,7 +123,7 @@ export function produtosReservadosPendentes(vendas: Venda[]): ProdutoReservadoPe
   return Array.from(map.values())
     .map((p) => ({
       ...p,
-      quantidade: Math.round(p.quantidade * 1000) / 1000,
+      quantidade: arredondarQuantidade(p.quantidade),
       valorTotal: Math.round(p.valorTotal * 100) / 100,
     }))
     .sort((a, b) => b.quantidade - a.quantidade || a.nome.localeCompare(b.nome, 'pt-BR'));
@@ -146,7 +147,7 @@ export function validarEstoqueVenda(estoque: EstoqueItem[], venda: Venda): strin
 
     if (disponivel < item.quantidade) {
       const totalNome = quantidadeDisponivel(estoque, item.nome);
-      return `Estoque insuficiente de "${item.nome}" (disponível: ${totalNome} ${item.unidade}, necessário: ${item.quantidade} ${item.unidade}).`;
+      return `Estoque insuficiente de "${item.nome}" (disponível: ${formatQuantidadeUnidade(totalNome, item.unidade)}, necessário: ${formatQuantidadeUnidade(item.quantidade, item.unidade)}).`;
     }
   }
   return null;
@@ -169,8 +170,8 @@ export function validarReservaVendaPendente(
       const reservado = quantidadeReservadaProduto(vendas, item.nome, ignorarVendaId);
       return (
         `Saldo insuficiente para reservar "${item.nome}" ` +
-        `(livre: ${livre} ${item.unidade}, em estoque: ${fisico}, já reservado em outras vendas pendentes: ${reservado}, ` +
-        `necessário: ${item.quantidade} ${item.unidade}).`
+        `(livre: ${formatQuantidadeUnidade(livre, item.unidade)}, em estoque: ${formatQuantidade(fisico)}, já reservado em outras vendas pendentes: ${formatQuantidade(reservado)}, ` +
+        `necessário: ${formatQuantidadeUnidade(item.quantidade, item.unidade)}).`
       );
     }
   }

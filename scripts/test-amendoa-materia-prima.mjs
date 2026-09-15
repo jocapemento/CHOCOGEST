@@ -38,6 +38,43 @@ function filtrarSaldoProdutosGerados(saldo, nomesProduzidos) {
   );
 }
 
+function catalogoProdutosProduzidos(saldo, nomesProduzidos) {
+  return saldo.filter((s) => nomesProduzidos.has(s.nome.toLowerCase()) && s.quantidade > 0);
+}
+
+function totalizarProdutosPrecificados(saldo, producoes, precosGerados) {
+  const nomesCatalogo = [];
+  const nomesSet = new Set();
+  for (const p of producoes) {
+    for (const prod of p.produtos ?? [{ nome: p.produto }]) {
+      const nome = (prod.nome ?? '').trim();
+      if (!nome) continue;
+      const key = nome.toLowerCase();
+      if (!nomesSet.has(key)) {
+        nomesSet.add(key);
+        nomesCatalogo.push(nome);
+      }
+    }
+  }
+  const saldos = catalogoProdutosProduzidos(saldo, nomesSet);
+  const mapaSaldo = new Map(saldos.map((s) => [s.nome.toLowerCase(), s]));
+  const nomes = new Set(nomesSet);
+  for (const s of saldos) nomes.add(s.nome.toLowerCase());
+
+  return Array.from(nomes)
+    .map((key) => {
+      const saldoItem = mapaSaldo.get(key);
+      const produto = saldoItem?.nome ?? nomesCatalogo.find((n) => n.toLowerCase() === key) ?? key;
+      const ultimoPreco = precosGerados.find((p) => p.produto.toLowerCase() === key);
+      return {
+        produto,
+        quantidade: saldoItem?.quantidade ?? 0,
+        precoSugerido: ultimoPreco?.precoSugerido ?? null,
+      };
+    })
+    .filter((i) => i.quantidade > 0 || i.precoSugerido !== null);
+}
+
 function resolverTipoIngredienteProducao(ingrediente, nomesProduzidos) {
   return tipoEstoqueCadeia(
     ingrediente.nome,
@@ -87,6 +124,36 @@ assert(
   resolverTipoIngredienteProducao({ nome: 'Nibs' }, nomesProduzidos) === 'ProdutoAcabado',
   'Nibs continua insumo intermediário'
 );
+
+const saldoComQuantidade = [
+  { nome: 'Amendoa de Cacau', tipo: 'MateriaPrima', quantidade: 20, unidade: 'kg' },
+  { nome: 'Amêndoa Torrada', tipo: 'MateriaPrima', quantidade: 12.5, unidade: 'kg' },
+  { nome: 'Nibs', tipo: 'ProdutoAcabado', quantidade: 8, unidade: 'kg' },
+];
+const dashboardSaldos = catalogoProdutosProduzidos(saldoComQuantidade, nomesProduzidos);
+assert(
+  dashboardSaldos.some((s) => s.nome === 'Amêndoa Torrada' && s.quantidade === 12.5),
+  'produtos produzidos no dashboard incluem quantidade da Amêndoa Torrada'
+);
+assert(
+  !dashboardSaldos.some((s) => s.nome === 'Amendoa de Cacau'),
+  'amêndoa crua (só compra) não entra em produtos produzidos'
+);
+
+const resumo = totalizarProdutosPrecificados(
+  saldoComQuantidade,
+  [
+    {
+      produto: 'Amêndoa Torrada',
+      produtos: [{ nome: 'Amêndoa Torrada', quantidade: 12.5, unidade: 'kg' }],
+    },
+    { produto: 'Nibs', produtos: [{ nome: 'Nibs', quantidade: 8, unidade: 'kg' }] },
+  ],
+  [{ produto: 'Amêndoa Torrada', precoSugerido: 80 }]
+);
+const torrada = resumo.find((i) => i.produto === 'Amêndoa Torrada');
+assert(torrada, 'Amêndoa Torrada aparece no resumo de precificação do dashboard');
+assert(torrada?.quantidade === 12.5, 'quantidade da Amêndoa Torrada não some no dashboard');
 
 if (fails.length) {
   console.error('FALHOU:\n' + fails.map((f) => `  - ${f}`).join('\n'));

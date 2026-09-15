@@ -102,10 +102,13 @@ import {
   validarReservaVendaPendente,
 } from '@/lib/vendas';
 import {
+  arredondarQuantidade,
   brlParaUsd,
   formatCurrency,
   formatDate,
   formatMesAno,
+  formatQuantidade,
+  formatQuantidadeUnidade,
   formatUsd,
   mesAtualISO,
   nextId,
@@ -174,7 +177,7 @@ function compraItensParaPatrimonio(
 
     const nome =
       item.quantidade > 1
-        ? `${item.nome} (${item.quantidade} ${item.unidade})`
+        ? `${item.nome} (${formatQuantidadeUnidade(item.quantidade, item.unidade)})`
         : item.nome;
 
     novos.push({
@@ -205,7 +208,7 @@ function atualizarEstoqueCompra(
       id: nextId(updated),
       nome: item.nome,
       tipo: tipoEstoqueCadeia(item.nome, item.tipo),
-      quantidade: item.quantidade,
+      quantidade: arredondarQuantidade(item.quantidade),
       unidade: item.unidade,
       valorUnit: item.valorUnit,
       data,
@@ -421,7 +424,7 @@ function ingredientesProducaoParaItens(
       id: 0,
       nome: ing.nome,
       tipo,
-      quantidade: ing.quantidade,
+      quantidade: arredondarQuantidade(ing.quantidade),
       unidade: ing.unidade ?? saldo?.unidade ?? 'kg',
       valorUnit: ing.valorUnit,
     };
@@ -434,7 +437,7 @@ function produtosProducaoParaItens(producao: Producao): ItemMovimentacao[] {
     id: 0,
     nome: p.nome,
     tipo: tipoEstoqueCadeia(p.nome),
-    quantidade: p.quantidade,
+    quantidade: arredondarQuantidade(p.quantidade),
     unidade: p.unidade,
     valorUnit: p.quantidade > 0 ? (p.custoAlocado ?? 0) / p.quantidade : 0,
   }));
@@ -491,8 +494,8 @@ function formatarMensagemBloqueioProducao(
     const disponivel = quantidadeDisponivel(estoque, prod.nome);
     const faltam = Math.max(0, prod.quantidade - disponivel);
     linhas.push(
-      `• ${prod.nome}: nesta produção ${prod.quantidade} ${prod.unidade} · disponível ${disponivel}` +
-        (faltam > 0 ? ` · faltam ${faltam}` : '')
+      `• ${prod.nome}: nesta produção ${formatQuantidadeUnidade(prod.quantidade, prod.unidade)} · disponível ${formatQuantidade(disponivel)}` +
+        (faltam > 0 ? ` · faltam ${formatQuantidade(faltam)}` : '')
     );
 
     const totalVendido = totalVendidoProduto(vendas, prod.nome);
@@ -507,7 +510,7 @@ function formatarMensagemBloqueioProducao(
     linhas.push('', 'Vendas que consumiram estes produtos:');
     for (const v of vendasRelacionadas.slice(0, 6)) {
       linhas.push(
-        `  — Venda #${v.vendaId} (${formatDate(v.data)}): ${v.quantidade} un. — ${v.cliente}`
+        `  — Venda #${v.vendaId} (${formatDate(v.data)}): ${formatQuantidade(v.quantidade)} un. — ${v.cliente}`
       );
     }
     if (vendasRelacionadas.length > 6) {
@@ -856,7 +859,7 @@ export default function ChocoGest() {
                   ...e,
                   nome,
                   tipo,
-                  quantidade: novoItem.quantidade,
+                  quantidade: arredondarQuantidade(novoItem.quantidade),
                   unidade: novoItem.unidade,
                   valorUnit: novoItem.valorUnit,
                   data: dataOperacao,
@@ -875,6 +878,7 @@ export default function ChocoGest() {
             ...novoItem,
             nome,
             tipo,
+            quantidade: arredondarQuantidade(novoItem.quantidade),
             data: dataOperacao,
           },
         ],
@@ -923,6 +927,7 @@ export default function ChocoGest() {
         ...itemCompra,
         nome,
         tipo: tipoEstoqueCadeia(nome, itemCompra.tipo),
+        quantidade: arredondarQuantidade(itemCompra.quantidade),
       };
       return { ...p, itens: [...p.itens, item] };
     });
@@ -1128,8 +1133,8 @@ export default function ChocoGest() {
     if (itemVenda.quantidade > disponivel) {
       return alert(
         `Quantidade indisponível para "${saldo.nome}". ` +
-          `Saldo livre: ${disponivel} ${saldo.unidade} ` +
-          `(estoque ${saldo.quantidade}${qtdJaNoForm > 0 ? `, já no pedido ${qtdJaNoForm}` : ''}). ` +
+          `Saldo livre: ${formatQuantidadeUnidade(disponivel, saldo.unidade)} ` +
+          `(estoque ${formatQuantidade(saldo.quantidade)}${qtdJaNoForm > 0 ? `, já no pedido ${formatQuantidade(qtdJaNoForm)}` : ''}). ` +
           `Considere as reservas de vendas pendentes.`
       );
     }
@@ -1143,7 +1148,7 @@ export default function ChocoGest() {
       id: nextId(novaVenda.itens),
       nome: saldo.nome,
       tipo: saldo.tipo,
-      quantidade: itemVenda.quantidade,
+      quantidade: arredondarQuantidade(itemVenda.quantidade),
       unidade: saldo.unidade,
       valorUnit,
     };
@@ -1326,13 +1331,18 @@ export default function ChocoGest() {
     }
     if (ingredienteForm.quantidade > item.quantidade) {
       return alert(
-        `Quantidade indisponível. Saldo de "${item.nome}": ${item.quantidade} ${item.unidade}.`
+        `Quantidade indisponível. Saldo de "${item.nome}": ${formatQuantidadeUnidade(item.quantidade, item.unidade)}.`
       );
     }
     setNovaProducao((p) => {
       const ingredientes = [
         ...p.ingredientes,
-        { ...ingredienteForm, unidade: item.unidade, tipo: item.tipo },
+        {
+          ...ingredienteForm,
+          quantidade: arredondarQuantidade(ingredienteForm.quantidade),
+          unidade: item.unidade,
+          tipo: item.tipo,
+        },
       ];
       const massa = ingredientesMassaProducao(ingredientes);
       const unidade = massa[0]?.unidade || p.produtos[0]?.unidade || 'kg';
@@ -1468,7 +1478,7 @@ export default function ChocoGest() {
     const produtosPreenchidos = novaProducao.produtos
       .map((p) => ({
         nome: p.nome.trim(),
-        quantidade: Number(p.quantidade) || 0,
+        quantidade: arredondarQuantidade(Number(p.quantidade) || 0),
         unidade: (p.unidade || 'kg').trim() || 'kg',
       }))
       .filter((p) => p.nome.length > 0);
@@ -2119,7 +2129,7 @@ export default function ChocoGest() {
                     icon: '🔥',
                     detalhe:
                       saldoEnergia.length > 0
-                        ? saldoEnergia.map((i) => `${i.quantidade} ${i.unidade}`).join(' · ')
+                        ? saldoEnergia.map((i) => formatQuantidadeUnidade(i.quantidade, i.unidade)).join(' · ')
                         : 'sem saldo — compre como Energia',
                   },
                   {
@@ -2185,7 +2195,7 @@ export default function ChocoGest() {
                         <div key={item.nome} className="flex justify-between py-2 border-b border-amber-800/30">
                           <span>{item.nome}</span>
                           <span className="text-amber-300">
-                            {item.quantidade} {item.unidade} — {formatCurrency(item.quantidade * item.valorUnit)}
+                            {formatQuantidadeUnidade(item.quantidade, item.unidade)} — {formatCurrency(item.quantidade * item.valorUnit)}
                           </span>
                         </div>
                       ))}
@@ -2206,7 +2216,7 @@ export default function ChocoGest() {
                         <div key={item.nome} className="flex justify-between py-2 border-b border-amber-800/30">
                           <span>{item.nome}</span>
                           <span className="text-amber-300">
-                            {item.quantidade} {item.unidade} — {formatCurrency(item.quantidade * item.valorUnit)}
+                            {formatQuantidadeUnidade(item.quantidade, item.unidade)} — {formatCurrency(item.quantidade * item.valorUnit)}
                           </span>
                         </div>
                       ))}
@@ -2227,7 +2237,7 @@ export default function ChocoGest() {
                         <div key={`${item.nome}-${item.tipo}`} className="flex justify-between py-2 border-b border-amber-800/30">
                           <span>{item.nome}</span>
                           <span className="text-amber-300">
-                            {item.quantidade} {item.unidade} — {formatCurrency(item.quantidade * item.valorUnit)}
+                            {formatQuantidadeUnidade(item.quantidade, item.unidade)} — {formatCurrency(item.quantidade * item.valorUnit)}
                           </span>
                         </div>
                       ))}
@@ -2278,7 +2288,7 @@ export default function ChocoGest() {
                               )}
                             </td>
                             <td className="py-2 text-right">
-                              {item.quantidade > 0 ? `${item.quantidade} ${item.unidade}` : '—'}
+                              {item.quantidade > 0 ? formatQuantidadeUnidade(item.quantidade, item.unidade) : '—'}
                             </td>
                             <td className="py-2 text-right">
                               {item.custoUnitario > 0 ? formatCurrency(item.custoUnitario) : '—'}
@@ -2351,7 +2361,7 @@ export default function ChocoGest() {
                       </div>
                       {v.itens.length > 0 && (
                         <p className="text-xs text-amber-400/70 mt-1">
-                          {v.itens.map((i) => `${i.nome} ${i.quantidade}${i.unidade}`).join(', ')}
+                          {v.itens.map((i) => `${i.nome} ${formatQuantidade(i.quantidade)}${i.unidade}`).join(', ')}
                         </p>
                       )}
                     </div>
@@ -2470,7 +2480,7 @@ export default function ChocoGest() {
                       {saldoMateriaPrima.map((item) => (
                         <tr key={item.nome} className="border-b border-amber-800/30">
                           <td className="py-2">{item.nome}</td>
-                          <td className="py-2 text-right">{item.quantidade} {item.unidade}</td>
+                          <td className="py-2 text-right">{formatQuantidadeUnidade(item.quantidade, item.unidade)}</td>
                           <td className="py-2 text-right">{formatCurrency(item.valorUnit)}</td>
                           <td className="py-2 text-right">{formatCurrency(item.quantidade * item.valorUnit)}</td>
                         </tr>
@@ -2504,7 +2514,7 @@ export default function ChocoGest() {
                       {saldoProdutosGerados.map((item) => (
                         <tr key={item.nome} className="border-b border-amber-800/30">
                           <td className="py-2">{item.nome}</td>
-                          <td className="py-2 text-right">{item.quantidade} {item.unidade}</td>
+                          <td className="py-2 text-right">{formatQuantidadeUnidade(item.quantidade, item.unidade)}</td>
                           <td className="py-2 text-right">{formatCurrency(item.valorUnit)}</td>
                           <td className="py-2 text-right">{formatCurrency(item.quantidade * item.valorUnit)}</td>
                         </tr>
@@ -2546,7 +2556,7 @@ export default function ChocoGest() {
                       {saldoEnergia.map((item) => (
                         <tr key={`${item.nome}-${item.tipo}`} className="border-b border-amber-800/30">
                           <td className="py-2">{item.nome}</td>
-                          <td className="py-2 text-right">{item.quantidade} {item.unidade}</td>
+                          <td className="py-2 text-right">{formatQuantidadeUnidade(item.quantidade, item.unidade)}</td>
                           <td className="py-2 text-right">{formatCurrency(item.valorUnit)}</td>
                           <td className="py-2 text-right">{formatCurrency(item.quantidade * item.valorUnit)}</td>
                         </tr>
@@ -2588,7 +2598,7 @@ export default function ChocoGest() {
                         >
                           <td className="py-2 text-amber-300">{formatDate(item.data ?? '')}</td>
                           <td className="py-2">{item.nome}</td>
-                          <td className="py-2 text-right">{item.quantidade} {item.unidade}</td>
+                          <td className="py-2 text-right">{formatQuantidadeUnidade(item.quantidade, item.unidade)}</td>
                           <td className="py-2 text-right">{formatCurrency(item.valorUnit)}</td>
                           <td className="py-2 text-right">{formatCurrency(item.quantidade * item.valorUnit)}</td>
                           <td className="py-2 text-right">
@@ -2628,7 +2638,7 @@ export default function ChocoGest() {
                         >
                           <td className="py-2 text-amber-300">{formatDate(item.data ?? '')}</td>
                           <td className="py-2">{item.nome}</td>
-                          <td className="py-2 text-right">{item.quantidade} {item.unidade}</td>
+                          <td className="py-2 text-right">{formatQuantidadeUnidade(item.quantidade, item.unidade)}</td>
                           <td className="py-2 text-right">{formatCurrency(item.valorUnit)}</td>
                           <td className="py-2 text-right">{formatCurrency(item.quantidade * item.valorUnit)}</td>
                           <td className="py-2 text-right">
@@ -2668,7 +2678,7 @@ export default function ChocoGest() {
                         >
                           <td className="py-2 text-amber-300">{formatDate(item.data ?? '')}</td>
                           <td className="py-2">{item.nome}</td>
-                          <td className="py-2 text-right">{item.quantidade} {item.unidade}</td>
+                          <td className="py-2 text-right">{formatQuantidadeUnidade(item.quantidade, item.unidade)}</td>
                           <td className="py-2 text-right">{formatCurrency(item.valorUnit)}</td>
                           <td className="py-2 text-right">{formatCurrency(item.quantidade * item.valorUnit)}</td>
                           <td className="py-2 text-right">
@@ -2773,7 +2783,7 @@ export default function ChocoGest() {
                       <option key={t} value={t}>{TIPOS_ITEM_LABEL[t]}</option>
                     ))}
                   </select>
-                  <input type="number" placeholder="Qtd" className={inputCls} value={itemCompra.quantidade} onChange={(e) => setItemCompra({ ...itemCompra, quantidade: +e.target.value })} />
+                  <input type="number" step="0.001" placeholder="Qtd" className={inputCls} value={itemCompra.quantidade} onChange={(e) => setItemCompra({ ...itemCompra, quantidade: +e.target.value })} />
                   <input placeholder="Un" className={inputCls} value={itemCompra.unidade} onChange={(e) => setItemCompra({ ...itemCompra, unidade: e.target.value })} />
                   <input type="number" step="0.01" placeholder="R$" className={inputCls} value={itemCompra.valorUnit} onChange={(e) => setItemCompra({ ...itemCompra, valorUnit: +e.target.value })} />
                 </div>
@@ -2782,7 +2792,7 @@ export default function ChocoGest() {
                   <div className="mt-4 text-sm space-y-1">
                     {novaCompra.itens.map((i) => (
                       <div key={i.id} className="flex justify-between items-center text-amber-200 gap-2">
-                        <span>{i.nome} — {i.quantidade} {i.unidade}</span>
+                        <span>{i.nome} — {formatQuantidadeUnidade(i.quantidade, i.unidade)}</span>
                         <div className="flex items-center gap-2">
                           <span>{formatCurrency(i.quantidade * i.valorUnit)}</span>
                           <Btn variant="danger" className="px-2 py-1" onClick={() => removerItemCompraLista(i.id)}>✕</Btn>
@@ -2828,7 +2838,7 @@ export default function ChocoGest() {
                               <div className="space-y-1">
                                 {c.itens.map((i) => (
                                   <div key={i.id}>
-                                    {i.nome} — {i.quantidade} {i.unidade}
+                                    {i.nome} — {formatQuantidadeUnidade(i.quantidade, i.unidade)}
                                   </div>
                                 ))}
                               </div>
@@ -2937,14 +2947,14 @@ export default function ChocoGest() {
                             : `${formatCurrency(e.valorUnit)} (custo)`;
                         return (
                           <option key={e.nome} value={e.nome}>
-                            {e.nome} — livre {livre}/{e.quantidade} {e.unidade} — {precoLabel}
+                            {e.nome} — livre {formatQuantidade(livre)}/{formatQuantidadeUnidade(e.quantidade, e.unidade)} — {precoLabel}
                           </option>
                         );
                       })}
                     </select>
                   </Field>
                   <Field label="Quantidade">
-                    <input type="number" className={inputCls} value={itemVenda.quantidade} onChange={(e) => setItemVenda({ ...itemVenda, quantidade: +e.target.value })} />
+                    <input type="number" step="0.001" className={inputCls} value={itemVenda.quantidade} onChange={(e) => setItemVenda({ ...itemVenda, quantidade: +e.target.value })} />
                   </Field>
                   <Field label="Preço (R$)">
                     <input type="number" step="0.01" className={inputCls} value={itemVenda.valorUnit} onChange={(e) => setItemVenda({ ...itemVenda, valorUnit: +e.target.value })} />
@@ -2984,7 +2994,7 @@ export default function ChocoGest() {
                   <div className="mt-4 text-sm space-y-1">
                     {novaVenda.itens.map((i) => (
                       <div key={i.id} className="flex justify-between items-center text-amber-200 gap-2">
-                        <span>{i.nome} × {i.quantidade}</span>
+                        <span>{i.nome} × {formatQuantidade(i.quantidade)}</span>
                         <div className="flex items-center gap-2">
                           <span>{formatCurrency(i.quantidade * i.valorUnit)}</span>
                           <Btn variant="danger" className="px-2 py-1" onClick={() => removerItemVendaLista(i.id)}>✕</Btn>
@@ -3056,7 +3066,7 @@ export default function ChocoGest() {
                               <tr key={r.nome} className="border-b border-amber-800/30">
                                 <td className="py-2">{r.nome}</td>
                                 <td className="py-2 text-right text-amber-200">
-                                  {r.quantidade} {r.unidade}
+                                  {formatQuantidadeUnidade(r.quantidade, r.unidade)}
                                 </td>
                                 <td className="py-2 text-right">
                                   {estoqueFisico} {r.unidade}
@@ -3107,7 +3117,7 @@ export default function ChocoGest() {
                                 <div className="space-y-1">
                                   {v.itens.map((i) => (
                                     <div key={i.id}>
-                                      {i.nome} — {i.quantidade} {i.unidade}
+                                      {i.nome} — {formatQuantidadeUnidade(i.quantidade, i.unidade)}
                                     </div>
                                   ))}
                                 </div>
@@ -3187,7 +3197,7 @@ export default function ChocoGest() {
                               <div className="space-y-1">
                                 {v.itens.map((i) => (
                                   <div key={i.id}>
-                                    {i.nome} — {i.quantidade} {i.unidade}
+                                    {i.nome} — {formatQuantidadeUnidade(i.quantidade, i.unidade)}
                                   </div>
                                 ))}
                               </div>
@@ -3263,7 +3273,7 @@ export default function ChocoGest() {
                               <div className="space-y-1">
                                 {c.produtos.map((p) => (
                                   <div key={p.nome}>
-                                    {p.nome} — {p.quantidade} {p.unidade} ({formatCurrency(p.valorTotal)})
+                                    {p.nome} — {formatQuantidadeUnidade(p.quantidade, p.unidade)} ({formatCurrency(p.valorTotal)})
                                   </div>
                                 ))}
                               </div>
@@ -3352,7 +3362,7 @@ export default function ChocoGest() {
                             .filter((e) => e.origem === 'compra')
                             .map((e) => (
                               <option key={`mp-${e.nome}`} value={e.nome}>
-                                {e.nome} ({e.quantidade} {e.unidade})
+                                {e.nome} ({formatQuantidadeUnidade(e.quantidade, e.unidade)})
                               </option>
                             ))}
                         </optgroup>
@@ -3363,7 +3373,7 @@ export default function ChocoGest() {
                             .filter((e) => e.origem === 'producao')
                             .map((e) => (
                               <option key={`pi-${e.nome}`} value={e.nome}>
-                                {e.nome} ({e.quantidade} {e.unidade})
+                                {e.nome} ({formatQuantidadeUnidade(e.quantidade, e.unidade)})
                               </option>
                             ))}
                         </optgroup>
@@ -3374,7 +3384,7 @@ export default function ChocoGest() {
                             .filter((e) => e.origem === 'energia')
                             .map((e) => (
                               <option key={`en-${e.nome}`} value={e.nome}>
-                                {e.nome} ({e.quantidade} {e.unidade})
+                                {e.nome} ({formatQuantidadeUnidade(e.quantidade, e.unidade)})
                               </option>
                             ))}
                         </optgroup>
@@ -3382,7 +3392,7 @@ export default function ChocoGest() {
                     </select>
                   </Field>
                   <Field label="Quantidade">
-                    <input type="number" className={inputCls} value={ingredienteForm.quantidade} onChange={(e) => setIngredienteForm({ ...ingredienteForm, quantidade: +e.target.value })} />
+                    <input type="number" step="0.001" className={inputCls} value={ingredienteForm.quantidade} onChange={(e) => setIngredienteForm({ ...ingredienteForm, quantidade: +e.target.value })} />
                   </Field>
                   <Field label="Valor Unitário (R$)">
                     <input type="number" step="0.01" className={inputCls} value={ingredienteForm.valorUnit} onChange={(e) => setIngredienteForm({ ...ingredienteForm, valorUnit: +e.target.value })} />
@@ -3400,8 +3410,7 @@ export default function ChocoGest() {
                             : ing.tipo === 'ProdutoAcabado'
                               ? ' (intermediário)'
                               : ''}
-                          : {ing.quantidade}{' '}
-                          {ing.unidade ?? 'kg'} — {formatCurrency(ing.quantidade * ing.valorUnit)}
+                          : {formatQuantidadeUnidade(ing.quantidade, ing.unidade ?? 'kg')} — {formatCurrency(ing.quantidade * ing.valorUnit)}
                         </span>
                         <Btn variant="danger" className="px-2 py-1" onClick={() => removerIngredienteLista(idx)}>✕</Btn>
                       </div>
@@ -3506,11 +3515,11 @@ export default function ChocoGest() {
                 {resumoPerdaProducao &&
                   novaProducao.produtos.some((p) => p.quantidade > 0) && (
                   <p className="text-sm text-amber-300/90 mb-4 bg-amber-950/40 border border-amber-800/50 rounded-lg px-3 py-2">
-                    Entrada: <strong>{resumoPerdaProducao.entrada} {resumoPerdaProducao.unidade}</strong>
+                    Entrada: <strong>{formatQuantidadeUnidade(resumoPerdaProducao.entrada, resumoPerdaProducao.unidade)}</strong>
                     {' → '}
-                    Saída: <strong>{resumoPerdaProducao.saida} {resumoPerdaProducao.unidade}</strong>
+                    Saída: <strong>{formatQuantidadeUnidade(resumoPerdaProducao.saida, resumoPerdaProducao.unidade)}</strong>
                     {' — '}
-                    Perda: <strong>{resumoPerdaProducao.perdaQuantidade} {resumoPerdaProducao.unidade}</strong>
+                    Perda: <strong>{formatQuantidadeUnidade(resumoPerdaProducao.perdaQuantidade, resumoPerdaProducao.unidade)}</strong>
                     {' '}({resumoPerdaProducao.perdaPercentual}%)
                   </p>
                 )}
@@ -3553,7 +3562,7 @@ export default function ChocoGest() {
                           <td className="py-2">{rotuloProdutosProducao(p)}</td>
                           <td className="py-2 text-right">
                             {produtosDaProducao(p)
-                              .map((prod) => `${prod.quantidade} ${prod.unidade}`)
+                              .map((prod) => formatQuantidadeUnidade(prod.quantidade, prod.unidade))
                               .join(' + ')}
                           </td>
                           <td className="py-2 text-right text-amber-300/80">
@@ -3561,7 +3570,7 @@ export default function ChocoGest() {
                               <>
                                 {p.percentualPerda ?? 0}%
                                 <span className="block text-xs text-amber-400/60">
-                                  −{p.quantidadePerdida} {p.unidade}
+                                  −{formatQuantidadeUnidade(p.quantidadePerdida, p.unidade)}
                                 </span>
                               </>
                             ) : (
@@ -3609,10 +3618,10 @@ export default function ChocoGest() {
                           <tr key={`${item.produto}-${item.unidade}`} className="border-b border-amber-800/30">
                             <td className="py-2">{item.produto}</td>
                             <td className="py-2 text-right">{item.lancamentos}</td>
-                            <td className="py-2 text-right">{item.entradaTotal} {item.unidade}</td>
-                            <td className="py-2 text-right">{item.saidaTotal} {item.unidade}</td>
+                            <td className="py-2 text-right">{formatQuantidadeUnidade(item.entradaTotal, item.unidade)}</td>
+                            <td className="py-2 text-right">{formatQuantidadeUnidade(item.saidaTotal, item.unidade)}</td>
                             <td className="py-2 text-right text-amber-300/80">
-                              −{item.perdaTotal} {item.unidade}
+                              −{formatQuantidadeUnidade(item.perdaTotal, item.unidade)}
                             </td>
                             <td className="py-2 text-right">{item.perdaPercentualMedia}%</td>
                           </tr>
@@ -3641,7 +3650,7 @@ export default function ChocoGest() {
                       {produtosParaPrecificacao.map((p) => (
                         <option key={p.nome} value={p.nome}>
                           {p.nome}
-                          {p.quantidade > 0 ? ` (${p.quantidade} ${p.unidade})` : ' (sem estoque)'}
+                          {p.quantidade > 0 ? ` (${formatQuantidadeUnidade(p.quantidade, p.unidade)})` : ' (sem estoque)'}
                         </option>
                       ))}
                     </select>

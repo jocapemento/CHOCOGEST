@@ -1,10 +1,11 @@
 import {
   agruparEstoque,
   catalogoNomesProdutos,
+  catalogoProdutosProduzidos,
   custoUltimaProducaoDoProduto,
-  filtrarSaldoProdutosGerados,
   type SaldoEstoque,
 } from '@/lib/estoque';
+import { arredondarQuantidade } from '@/lib/format';
 import type { AppData, EstoqueItem, PrecoGerado, Producao } from '@/lib/types';
 
 export interface ResumoProdutoPrecificado {
@@ -144,7 +145,7 @@ export function catalogoProdutosPrecificacao(
         nome,
         unidade,
         custoUnitario,
-        quantidade: s?.quantidade ?? 0,
+        quantidade: arredondarQuantidade(s?.quantidade ?? 0),
         origemCusto,
       };
     })
@@ -169,8 +170,9 @@ export function totalizarProdutosPrecificados(
   producoes: Producao[],
   precosGerados: PrecoGerado[]
 ): ResumoPrecificacaoDashboard {
-  const saldoEstoque = agruparEstoque(estoque);
-  const saldos = filtrarSaldoProdutosGerados(saldoEstoque, producoes);
+  // Inclui saldo de tudo que saiu de produção, mesmo se o item for matéria-prima
+  // da cadeia (Amêndoa Torrada). O card "Produtos gerados" continua filtrando isso.
+  const saldos = catalogoProdutosProduzidos(producoes, estoque);
   const nomesCatalogo = catalogoNomesProdutos(producoes);
 
   const mapaSaldo = new Map<string, SaldoEstoque>();
@@ -187,7 +189,7 @@ export function totalizarProdutosPrecificados(
       const saldo = mapaSaldo.get(key);
       const produto = saldo?.nome ?? nomesCatalogo.find((n) => n.toLowerCase() === key) ?? key;
       const ultimoPreco = ultimoPrecoRegistrado(precosGerados, produto);
-      const quantidade = saldo?.quantidade ?? 0;
+      const quantidade = arredondarQuantidade(saldo?.quantidade ?? 0);
       const custoUnitario = saldo?.valorUnit ?? ultimoPreco?.custoUnitario ?? 0;
       const unidade = saldo?.unidade ?? ultimoPreco?.unidade ?? 'un';
       const precoSugerido = ultimoPreco?.precoSugerido ?? null;

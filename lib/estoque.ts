@@ -1,4 +1,5 @@
 import { ehInsumoEnergia, ehMateriaPrimaCadeia, tipoEstoqueCadeia } from '@/lib/cadeia-producao';
+import { arredondarQuantidade, formatQuantidadeUnidade } from '@/lib/format';
 import type {
   Compra,
   EstoqueItem,
@@ -33,7 +34,7 @@ export function agruparEstoque(estoque: EstoqueItem[]): SaldoEstoque[] {
     const existing = map.get(key);
 
     if (existing) {
-      const qtd = existing.quantidade + item.quantidade;
+      const qtd = arredondarQuantidade(existing.quantidade + item.quantidade);
       const valorMedio =
         qtd > 0
           ? (existing.quantidade * existing.valorUnit + item.quantidade * item.valorUnit) / qtd
@@ -44,7 +45,7 @@ export function agruparEstoque(estoque: EstoqueItem[]): SaldoEstoque[] {
         nome: item.nome,
         tipo: item.tipo,
         unidade: item.unidade,
-        quantidade: item.quantidade,
+        quantidade: arredondarQuantidade(item.quantidade),
         valorUnit: item.valorUnit,
       });
     }
@@ -54,9 +55,11 @@ export function agruparEstoque(estoque: EstoqueItem[]): SaldoEstoque[] {
 }
 
 export function quantidadeDisponivel(estoque: EstoqueItem[], nome: string): number {
-  return estoque
-    .filter((e) => e.nome.toLowerCase() === nome.toLowerCase() && e.quantidade > 0)
-    .reduce((acc, e) => acc + e.quantidade, 0);
+  return arredondarQuantidade(
+    estoque
+      .filter((e) => e.nome.toLowerCase() === nome.toLowerCase() && e.quantidade > 0)
+      .reduce((acc, e) => acc + e.quantidade, 0)
+  );
 }
 
 function compararLancamentosFifo(a: EstoqueItem, b: EstoqueItem): number {
@@ -91,8 +94,11 @@ export function baixarEstoqueFifo(
       if (restante <= 0) break;
 
       const baixa = Math.min(updated[index].quantidade, restante);
-      updated[index] = { ...updated[index], quantidade: updated[index].quantidade - baixa };
-      restante -= baixa;
+      updated[index] = {
+        ...updated[index],
+        quantidade: arredondarQuantidade(updated[index].quantidade - baixa),
+      };
+      restante = arredondarQuantidade(restante - baixa);
     }
   }
 
@@ -141,7 +147,7 @@ export function agruparEstoquePorNomeTipo(estoque: EstoqueItem[]): SaldoEstoque[
     const existing = map.get(key);
 
     if (existing) {
-      const qtd = existing.quantidade + item.quantidade;
+      const qtd = arredondarQuantidade(existing.quantidade + item.quantidade);
       const valorMedio =
         qtd > 0
           ? (existing.quantidade * existing.valorUnit + item.quantidade * item.valorUnit) / qtd
@@ -152,7 +158,7 @@ export function agruparEstoquePorNomeTipo(estoque: EstoqueItem[]): SaldoEstoque[
         nome: item.nome,
         tipo: item.tipo,
         unidade: item.unidade,
-        quantidade: item.quantidade,
+        quantidade: arredondarQuantidade(item.quantidade),
         valorUnit: item.valorUnit,
       });
     }
@@ -289,7 +295,7 @@ export function validarIngredientesProducao(
     }
 
     if (saldo.quantidade < ing.quantidade) {
-      return `Ingrediente "${ing.nome}" insuficiente (disponível: ${saldo.quantidade} ${saldo.unidade}, necessário: ${ing.quantidade}${ing.unidade ? ` ${ing.unidade}` : ''}).`;
+      return `Ingrediente "${ing.nome}" insuficiente (disponível: ${formatQuantidadeUnidade(saldo.quantidade, saldo.unidade)}, necessário: ${formatQuantidadeUnidade(ing.quantidade, ing.unidade)}).`;
     }
   }
 
@@ -362,7 +368,7 @@ export function totalEntradaIngredientes(
     if (u.toLowerCase() !== unidade.toLowerCase()) return null;
   }
 
-  const total = massa.reduce((acc, ing) => acc + ing.quantidade, 0);
+  const total = arredondarQuantidade(massa.reduce((acc, ing) => acc + ing.quantidade, 0));
   return { total, unidade };
 }
 
@@ -376,7 +382,7 @@ export function produtosDaProducao(
     return producao.produtos
       .map((p) => ({
         nome: (p.nome ?? '').trim(),
-        quantidade: Number(p.quantidade) || 0,
+        quantidade: arredondarQuantidade(Number(p.quantidade) || 0),
         unidade: (p.unidade ?? 'kg').trim() || 'kg',
         custoAlocado: p.custoAlocado,
       }))
@@ -388,7 +394,7 @@ export function produtosDaProducao(
   return [
     {
       nome,
-      quantidade: Number(producao.quantidade) || 0,
+      quantidade: arredondarQuantidade(Number(producao.quantidade) || 0),
       unidade: (producao.unidade ?? 'kg').trim() || 'kg',
     },
   ];
@@ -414,7 +420,7 @@ export function totalSaidaProdutos(
     if ((p.unidade || 'kg').toLowerCase() !== unidade.toLowerCase()) return null;
   }
 
-  const total = produtos.reduce((acc, p) => acc + p.quantidade, 0);
+  const total = arredondarQuantidade(produtos.reduce((acc, p) => acc + p.quantidade, 0));
   return { total, unidade };
 }
 
@@ -473,10 +479,6 @@ export interface PerdaProducao {
   saida: number;
   perdaQuantidade: number;
   perdaPercentual: number;
-}
-
-function arredondarQuantidade(valor: number): number {
-  return Math.round(valor * 1000) / 1000;
 }
 
 export function calcularPerdaProducao(

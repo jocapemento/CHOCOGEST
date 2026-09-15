@@ -21,7 +21,7 @@ import type {
   QuitacaoCartao,
   Venda,
 } from './types';
-import { normalizeDateISO, todayISO } from './format';
+import { arredondarQuantidade, normalizeDateISO, todayISO } from './format';
 
 function asNumber(value: unknown, fallback = 0): number {
   const n = Number(value);
@@ -36,7 +36,7 @@ function normalizeEstoque(items: unknown[]): EstoqueItem[] {
       id: item.id ?? idx + 1,
       nome,
       tipo: tipoEstoqueCadeia(nome, item.tipo ?? 'MateriaPrima'),
-      quantidade: asNumber(item.quantidade),
+      quantidade: arredondarQuantidade(asNumber(item.quantidade)),
       unidade: item.unidade ?? 'un',
       valorUnit: asNumber(item.valorUnit),
       data: item.data ? normalizeDateISO(item.data, todayISO()) : undefined,
@@ -137,12 +137,12 @@ function normalizeProdutosGerados(
 ): ProdutoGeradoProducao[] {
   const base = produtosDaProducao({
     produto: item.produto ?? '',
-    quantidade: asNumber(item.quantidade, 0),
+    quantidade: arredondarQuantidade(asNumber(item.quantidade, 0)),
     unidade: item.unidade ?? 'kg',
     produtos: Array.isArray(item.produtos)
       ? item.produtos.map((p) => ({
           nome: p.nome ?? '',
-          quantidade: asNumber(p.quantidade),
+          quantidade: arredondarQuantidade(asNumber(p.quantidade)),
           unidade: p.unidade ?? item.unidade ?? 'kg',
           custoAlocado:
             p.custoAlocado !== undefined && p.custoAlocado !== null
@@ -168,13 +168,15 @@ function normalizeProducoes(items: unknown[]): Producao[] {
       data: normalizeDateISO(item.data, todayISO()),
       lote: item.lote ?? '',
       produto: legado.produto || (item.produto ?? ''),
-      quantidade: legado.produto ? legado.quantidade : asNumber(item.quantidade, 0),
+      quantidade: legado.produto
+        ? legado.quantidade
+        : arredondarQuantidade(asNumber(item.quantidade, 0)),
       unidade: legado.produto ? legado.unidade : (item.unidade ?? 'kg'),
       produtos,
       ingredientes: Array.isArray(item.ingredientes)
         ? item.ingredientes.map((ing) => ({
             nome: ing.nome ?? '',
-            quantidade: asNumber(ing.quantidade),
+            quantidade: arredondarQuantidade(asNumber(ing.quantidade)),
             valorUnit: asNumber(ing.valorUnit),
             unidade: ing.unidade,
             tipo: ing.tipo,

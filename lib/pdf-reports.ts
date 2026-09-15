@@ -21,7 +21,7 @@ import {
   STATUS_VENDA_LABEL,
 } from './vendas';
 import type { AppData } from './types';
-import { formatCurrency, formatDate, sumBy } from './format';
+import { formatCurrency, formatDate, formatQuantidade, formatQuantidadeUnidade, sumBy } from './format';
 
 function addHeader(doc: jsPDF, title: string) {
   doc.setFillColor(120, 53, 15);
@@ -50,7 +50,7 @@ function tabelaSaldoPdf(
 ) {
   const rows = saldo.map((item) => [
     item.nome,
-    `${item.quantidade} ${item.unidade}`,
+    formatQuantidadeUnidade(item.quantidade, item.unidade),
     formatCurrency(item.valorUnit),
     formatCurrency(item.quantidade * item.valorUnit),
   ]);
@@ -82,7 +82,7 @@ function tabelaLancamentosPdf(
   const rows = lancamentos.map((item) => [
     formatDate(item.data ?? ''),
     item.nome,
-    `${item.quantidade} ${item.unidade}`,
+    formatQuantidadeUnidade(item.quantidade, item.unidade),
     formatCurrency(item.valorUnit),
     formatCurrency(item.quantidade * item.valorUnit),
   ]);
@@ -132,7 +132,7 @@ export function gerarPdfCompras(data: AppData) {
     formatDate(c.data),
     c.fornecedor,
     c.itens.length > 0
-      ? c.itens.map((i) => `${i.nome} (${i.quantidade} ${i.unidade})`).join(', ')
+      ? c.itens.map((i) => `${i.nome} (${formatQuantidadeUnidade(i.quantidade, i.unidade)})`).join(', ')
       : '—',
     c.formaPagamento,
     formatCurrency(c.total),
@@ -211,7 +211,7 @@ export function gerarPdfVendas(data: AppData) {
       head: [['Produto', 'Reservado', 'Pedidos', 'Valor']],
       body: reservas.map((r) => [
         r.nome,
-        `${r.quantidade} ${r.unidade}`,
+        formatQuantidadeUnidade(r.quantidade, r.unidade),
         String(r.pedidos),
         formatCurrency(r.valorTotal),
       ]),
@@ -265,8 +265,8 @@ export function gerarPdfVendas(data: AppData) {
         c.vendasEmProcessamento > 0
           ? `${c.vendasConcluidas} (+${c.vendasEmProcessamento} pend.)`
           : String(c.vendasConcluidas),
-        String(c.quantidadeTotal),
-        c.produtos.map((p) => `${p.nome} ${p.quantidade}${p.unidade}`).join('; '),
+        formatQuantidade(c.quantidadeTotal),
+        c.produtos.map((p) => `${p.nome} ${formatQuantidade(p.quantidade)}${p.unidade}`).join('; '),
         formatCurrency(c.valorTotal),
       ]),
       theme: 'grid',
@@ -394,7 +394,7 @@ export function gerarPdfDashboard(data: AppData) {
   if (resumoPreco.itens.length > 0) {
     const precificacaoRows = resumoPreco.itens.map((item) => [
       item.produto,
-      item.quantidade > 0 ? `${item.quantidade} ${item.unidade}` : '—',
+      item.quantidade > 0 ? formatQuantidadeUnidade(item.quantidade, item.unidade) : '—',
       item.custoUnitario > 0 ? formatCurrency(item.custoUnitario) : '—',
       item.margemLucro !== null ? `${item.margemLucro}%` : '—',
       item.precoSugerido !== null ? formatCurrency(item.precoSugerido) : '—',

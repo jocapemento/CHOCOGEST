@@ -1,3 +1,29 @@
+/** Quantidade com no máximo 3 dígitos na fração. */
+export function arredondarQuantidade(valor: number): number {
+  const n = Number(valor);
+  if (!Number.isFinite(n)) return 0;
+  return Math.round(n * 1000) / 1000;
+}
+
+/** Exibe quantidade com no máximo 3 casas decimais, sem zeros à direita. */
+export function formatQuantidade(valor: number | null | undefined): string {
+  const n = arredondarQuantidade(Number(valor));
+  return n.toLocaleString('en-US', {
+    useGrouping: false,
+    maximumFractionDigits: 3,
+    minimumFractionDigits: 0,
+  });
+}
+
+export function formatQuantidadeUnidade(
+  quantidade: number | null | undefined,
+  unidade?: string | null
+): string {
+  const q = formatQuantidade(quantidade);
+  const u = (unidade ?? '').trim();
+  return u ? `${q} ${u}` : q;
+}
+
 export function formatCurrency(value: number | null | undefined): string {
   const n = Number(value);
   if (!Number.isFinite(n)) return 'R$\u00a00,00';
