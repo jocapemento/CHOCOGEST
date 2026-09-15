@@ -119,6 +119,11 @@ function normalizeCompras(items: unknown[]): Compra[] {
 function normalizeVendas(items: unknown[]): Venda[] {
   return items.map((raw, idx) => {
     const item = raw as Partial<Venda>;
+    const descontoTipo =
+      item.descontoTipo === 'percentual' || item.descontoTipo === 'valor'
+        ? item.descontoTipo
+        : undefined;
+    const desconto = descontoTipo ? Math.max(0, asNumber(item.desconto)) : 0;
     return {
       id: item.id ?? idx + 1,
       data: normalizeDateISO(item.data, todayISO()),
@@ -126,6 +131,7 @@ function normalizeVendas(items: unknown[]): Venda[] {
       formaPagamento: item.formaPagamento ?? 'Dinheiro',
       status: item.status === 'em_processamento' ? 'em_processamento' : 'concluida',
       total: asNumber(item.total),
+      ...(descontoTipo && desconto > 0 ? { descontoTipo, desconto } : {}),
       itens: Array.isArray(item.itens) ? normalizeEstoque(item.itens) : [],
     };
   });

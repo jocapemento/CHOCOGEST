@@ -40,13 +40,21 @@ export interface Compra {
 
 export type StatusVenda = 'em_processamento' | 'concluida';
 
+/** Desconto da venda: percentual sobre o subtotal ou valor em reais. */
+export type TipoDescontoVenda = 'percentual' | 'valor';
+
 export interface Venda {
   id: number;
   data: string;
   cliente: string;
   formaPagamento: string;
   status?: StatusVenda;
+  /** Total líquido (subtotal − desconto). */
   total: number;
+  /** Ausente ou indefinido = sem desconto. */
+  descontoTipo?: TipoDescontoVenda;
+  /** Percentual (0–100) ou valor em R$, conforme `descontoTipo`. */
+  desconto?: number;
   itens: ItemMovimentacao[];
 }
 

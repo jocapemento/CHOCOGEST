@@ -17,6 +17,7 @@ import type {
   QuitacaoCartao,
   TipoItem,
   StatusVenda,
+  TipoDescontoVenda,
   Venda,
 } from '@/lib/types';
 import { EMPTY_DATA, TIPOS_ITEM, TIPOS_ITEM_LABEL } from '@/lib/types';
@@ -91,6 +92,7 @@ import {
   totalizarProdutosPrecificados,
 } from '@/lib/precificacao';
 import {
+  formatarDescontoVenda,
   isVendaConcluida,
   listarVendasPendentes,
   produtosReservadosPendentes,
@@ -98,8 +100,12 @@ import {
   resumoVendasPendentes,
   saldoLivreParaVenda,
   STATUS_VENDA_LABEL,
+  subtotalItensVenda,
+  totalLiquidoVenda,
   validarEstoqueVenda,
   validarReservaVendaPendente,
+  valorDescontoAplicado,
+  vendaTemDesconto,
 } from '@/lib/vendas';
 import {
   arredondarQuantidade,
@@ -369,7 +375,9 @@ function aplicarMovimentoVenda(
   dataOperacao: string,
   bancoPadrao?: string
 ) {
-  const desc = `Venda: ${venda.cliente}`;
+  const desc = vendaTemDesconto(venda)
+    ? `Venda: ${venda.cliente} (desconto ${formatarDescontoVenda(venda)})`
+    : `Venda: ${venda.cliente}`;
   let caixa = movCaixa;
   let banco = movBanco;
 
@@ -539,6 +547,8 @@ const VENDA_FORM_INICIAL = {
   cliente: '',
   formaPagamento: 'Dinheiro',
   status: 'concluida' as StatusVenda,
+  descontoTipo: '' as TipoDescontoVenda | '',
+  desconto: 0,
   itens: [] as ItemMovimentacao[],
 };
 
@@ -1176,6 +1186,8 @@ export default function ChocoGest() {
       cliente: venda.cliente,
       formaPagamento: venda.formaPagamento,
       status: venda.status ?? 'concluida',
+      descontoTipo: venda.descontoTipo ?? '',
+      desconto: venda.desconto ?? 0,
       itens: venda.itens.map((i) => ({ ...i })),
     });
     setVendaEditandoId(venda.id);
@@ -1225,7 +1237,17 @@ export default function ChocoGest() {
     if (!novaVenda.cliente.trim() || novaVenda.itens.length === 0) {
       return alert('Preencha cliente e adicione itens.');
     }
-    const total = sumBy(novaVenda.itens, (i) => i.quantidade * i.valorUnit);
+    const descontoTipo = novaVenda.descontoTipo || undefined;
+    const descontoInformado = descontoTipo ? Math.max(0, Number(novaVenda.desconto) || 0) : 0;
+    const subtotal = subtotalItensVenda(novaVenda.itens);
+    if (descontoTipo === 'percentual' && descontoInformado > 100) {
+      return alert('O desconto percentual não pode ser maior que 100%.');
+    }
+    if (descontoTipo === 'valor' && descontoInformado > subtotal) {
+      return alert('O desconto em valor não pode ser maior que o subtotal dos itens.');
+    }
+    const temDesconto = Boolean(descontoTipo && descontoInformado > 0);
+    const total = totalLiquidoVenda(novaVenda.itens, descontoTipo, descontoInformado);
     const dataOperacao = normalizeDateISO(novaVenda.data);
     const editando = vendaEditandoId !== null;
 
@@ -1236,6 +1258,7 @@ export default function ChocoGest() {
       formaPagamento: novaVenda.formaPagamento,
       status: novaVenda.status,
       total,
+      ...(temDesconto ? { descontoTipo, desconto: descontoInformado } : {}),
       itens: novaVenda.itens,
     };
 
@@ -1989,6 +2012,19 @@ export default function ChocoGest() {
   );
 
   const rankingClientes = useMemo(() => rankingMelhoresClientes(data.vendas), [data.vendas]);
+  const resumoFormVenda = useMemo(() => {
+    const subtotal = subtotalItensVenda(novaVenda.itens);
+    const descontoAplicado = valorDescontoAplicado(
+      subtotal,
+      novaVenda.descontoTipo,
+      novaVenda.desconto
+    );
+    return {
+      subtotal,
+      descontoAplicado,
+      total: totalLiquidoVenda(novaVenda.itens, novaVenda.descontoTipo, novaVenda.desconto),
+    };
+  }, [novaVenda.itens, novaVenda.descontoTipo, novaVenda.desconto]);
   const clienteFormInfo = rankingClientes.find(
     (c) => c.cliente.toLowerCase() === novaVenda.cliente.trim().toLowerCase()
   );
@@ -2362,6 +2398,7 @@ export default function ChocoGest() {
                       {v.itens.length > 0 && (
                         <p className="text-xs text-amber-400/70 mt-1">
                           {v.itens.map((i) => `${i.nome} ${formatQuantidade(i.quantidade)}${i.unidade}`).join(', ')}
+                          {vendaTemDesconto(v) ? ` · desc. ${formatarDescontoVenda(v)}` : ''}
                         </p>
                       )}
                     </div>
@@ -2904,6 +2941,44 @@ export default function ChocoGest() {
                       <option value="concluida">{STATUS_VENDA_LABEL.concluida}</option>
                     </select>
                   </Field>
+                  <Field label="Desconto">
+                    <select
+                      className={inputCls}
+                      value={novaVenda.descontoTipo}
+                      onChange={(e) =>
+                        setNovaVenda((p) => ({
+                          ...p,
+                          descontoTipo: e.target.value as TipoDescontoVenda | '',
+                          desconto: e.target.value ? p.desconto : 0,
+                        }))
+                      }
+                    >
+                      <option value="">Sem desconto</option>
+                      <option value="percentual">Percentual (%)</option>
+                      <option value="valor">Valor (R$)</option>
+                    </select>
+                  </Field>
+                  {novaVenda.descontoTipo ? (
+                    <Field
+                      label={
+                        novaVenda.descontoTipo === 'percentual'
+                          ? 'Percentual (%)'
+                          : 'Valor do desconto (R$)'
+                      }
+                    >
+                      <input
+                        type="number"
+                        min={0}
+                        max={novaVenda.descontoTipo === 'percentual' ? 100 : undefined}
+                        step={novaVenda.descontoTipo === 'percentual' ? '0.01' : '0.01'}
+                        className={inputCls}
+                        value={novaVenda.desconto}
+                        onChange={(e) =>
+                          setNovaVenda((p) => ({ ...p, desconto: +e.target.value }))
+                        }
+                      />
+                    </Field>
+                  ) : null}
                 </div>
                 <p className="text-amber-400/70 text-xs mb-3">
                   <strong>Pendente:</strong> entra na relação de vendas pendentes, reserva o produto no
@@ -3001,6 +3076,27 @@ export default function ChocoGest() {
                         </div>
                       </div>
                     ))}
+                    <div className="pt-3 mt-2 border-t border-amber-800/40 space-y-1 text-amber-200">
+                      <div className="flex justify-between gap-2">
+                        <span>Subtotal</span>
+                        <span>{formatCurrency(resumoFormVenda.subtotal)}</span>
+                      </div>
+                      {resumoFormVenda.descontoAplicado > 0 && (
+                        <div className="flex justify-between gap-2 text-amber-300">
+                          <span>
+                            Desconto
+                            {novaVenda.descontoTipo === 'percentual'
+                              ? ` (${formatQuantidade(novaVenda.desconto)}%)`
+                              : ''}
+                          </span>
+                          <span>− {formatCurrency(resumoFormVenda.descontoAplicado)}</span>
+                        </div>
+                      )}
+                      <div className="flex justify-between gap-2 font-semibold text-amber-100">
+                        <span>Total</span>
+                        <span>{formatCurrency(resumoFormVenda.total)}</span>
+                      </div>
+                    </div>
                   </div>
                 )}
                 <div className="flex flex-wrap gap-2 mt-4">
@@ -3128,6 +3224,11 @@ export default function ChocoGest() {
                             <td className="py-2">{v.formaPagamento}</td>
                             <td className="py-2 text-right font-semibold text-amber-100">
                               {formatCurrency(v.total)}
+                              {vendaTemDesconto(v) && (
+                                <div className="text-xs font-normal text-amber-400/70">
+                                  desc. {formatarDescontoVenda(v)}
+                                </div>
+                              )}
                             </td>
                             <td className="py-2 text-right whitespace-nowrap">
                               <div className="flex flex-wrap justify-end gap-1">
@@ -3211,7 +3312,14 @@ export default function ChocoGest() {
                             </span>
                           </td>
                           <td className="py-2">{v.formaPagamento}</td>
-                          <td className="py-2 text-right">{formatCurrency(v.total)}</td>
+                          <td className="py-2 text-right">
+                            {formatCurrency(v.total)}
+                            {vendaTemDesconto(v) && (
+                              <div className="text-xs text-amber-400/70">
+                                desc. {formatarDescontoVenda(v)}
+                              </div>
+                            )}
+                          </td>
                           <td className="py-2 text-right whitespace-nowrap">
                             <div className="flex flex-wrap justify-end gap-1">
                               <Btn variant="secondary" onClick={() => editarVenda(v)}>

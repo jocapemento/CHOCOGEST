@@ -1,6 +1,11 @@
 import { quantidadeDisponivel } from '@/lib/estoque';
-import { arredondarQuantidade, formatQuantidade, formatQuantidadeUnidade } from '@/lib/format';
-import type { EstoqueItem, ItemMovimentacao, StatusVenda, Venda } from '@/lib/types';
+import {
+  arredondarQuantidade,
+  formatCurrency,
+  formatQuantidade,
+  formatQuantidadeUnidade,
+} from '@/lib/format';
+import type { EstoqueItem, ItemMovimentacao, StatusVenda, TipoDescontoVenda, Venda } from '@/lib/types';
 
 export const STATUS_VENDA_LABEL: Record<StatusVenda, string> = {
   em_processamento: 'Pendente',
@@ -22,6 +27,79 @@ export function formatarItensVenda(itens: ItemMovimentacao[]): string {
 
 export function totalQuantidadeVenda(itens: ItemMovimentacao[]): number {
   return itens.reduce((acc, i) => acc + i.quantidade, 0);
+}
+
+function arredondarDinheiroVenda(valor: number): number {
+  const n = Number(valor);
+  if (!Number.isFinite(n)) return 0;
+  return Math.round(n * 100) / 100;
+}
+
+export function subtotalItensVenda(itens: ItemMovimentacao[]): number {
+  return arredondarDinheiroVenda(itens.reduce((acc, i) => acc + i.quantidade * i.valorUnit, 0));
+}
+
+/** Valor em R$ efetivamente abatido do subtotal. */
+export function valorDescontoAplicado(
+  subtotal: number,
+  descontoTipo?: TipoDescontoVenda | '' | null,
+  desconto?: number | null
+): number {
+  const sub = arredondarDinheiroVenda(subtotal);
+  const raw = Number(desconto);
+  if (descontoTipo !== 'percentual' && descontoTipo !== 'valor') return 0;
+  if (!Number.isFinite(raw) || raw <= 0 || sub <= 0) return 0;
+  if (descontoTipo === 'percentual') {
+    const pct = Math.min(100, raw);
+    return arredondarDinheiroVenda(sub * (pct / 100));
+  }
+  return Math.min(sub, arredondarDinheiroVenda(raw));
+}
+
+export function totalLiquidoVenda(
+  itens: ItemMovimentacao[],
+  descontoTipo?: TipoDescontoVenda | '' | null,
+  desconto?: number | null
+): number {
+  const subtotal = subtotalItensVenda(itens);
+  return arredondarDinheiroVenda(subtotal - valorDescontoAplicado(subtotal, descontoTipo, desconto));
+}
+
+export function vendaTemDesconto(
+  venda: Pick<Venda, 'descontoTipo' | 'desconto'>
+): boolean {
+  return (
+    (venda.descontoTipo === 'percentual' || venda.descontoTipo === 'valor') &&
+    Number(venda.desconto) > 0
+  );
+}
+
+/** Rótulo curto do desconto informado (ex.: "10%" ou "R$ 5,00"). */
+export function formatarDescontoInformado(
+  venda: Pick<Venda, 'descontoTipo' | 'desconto'>
+): string {
+  if (!vendaTemDesconto(venda)) return '—';
+  if (venda.descontoTipo === 'percentual') {
+    return `${formatQuantidade(venda.desconto)}%`;
+  }
+  return formatCurrency(venda.desconto);
+}
+
+/** Rótulo com valor abatido, para listas e PDF. */
+export function formatarDescontoVenda(
+  venda: Pick<Venda, 'descontoTipo' | 'desconto' | 'itens'>
+): string {
+  if (!vendaTemDesconto(venda)) return '—';
+  const aplicado = valorDescontoAplicado(
+    subtotalItensVenda(venda.itens),
+    venda.descontoTipo,
+    venda.desconto
+  );
+  if (aplicado <= 0) return '—';
+  if (venda.descontoTipo === 'percentual') {
+    return `${formatQuantidade(venda.desconto)}% (${formatCurrency(aplicado)})`;
+  }
+  return formatCurrency(aplicado);
 }
 
 /** Vendas com status pendente (em processamento), mais recentes primeiro. */
@@ -100,10 +178,12 @@ export function produtosReservadosPendentes(vendas: Venda[]): ProdutoReservadoPe
   const map = new Map<string, ProdutoReservadoPendente>();
 
   for (const venda of listarVendasPendentes(vendas)) {
+    const subtotal = subtotalItensVenda(venda.itens);
+    const ratio = subtotal > 0 ? venda.total / subtotal : 1;
     for (const item of venda.itens) {
       const key = item.nome.toLowerCase();
       const existente = map.get(key);
-      const valorItem = item.quantidade * item.valorUnit;
+      const valorItem = item.quantidade * item.valorUnit * ratio;
       if (existente) {
         existente.quantidade += item.quantidade;
         existente.valorTotal += valorItem;
@@ -231,10 +311,12 @@ export function rankingMelhoresClientes(vendas: Venda[]): ResumoClienteVenda[] {
       resumo.valorTotal += venda.total;
       resumo.quantidadeTotal += totalQuantidadeVenda(venda.itens);
 
+      const subtotal = subtotalItensVenda(venda.itens);
+      const ratio = subtotal > 0 ? venda.total / subtotal : 1;
       for (const item of venda.itens) {
         const prodKey = item.nome.toLowerCase();
         const existente = resumo.produtos.find((p) => p.nome.toLowerCase() === prodKey);
-        const valorItem = item.quantidade * item.valorUnit;
+        const valorItem = item.quantidade * item.valorUnit * ratio;
         if (existente) {
           existente.quantidade += item.quantidade;
           existente.valorTotal += valorItem;
