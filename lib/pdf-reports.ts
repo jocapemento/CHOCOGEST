@@ -2,9 +2,11 @@ import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import {
   agruparEstoque,
+  filtrarLancamentosEmbalagem,
   filtrarLancamentosEnergia,
   filtrarLancamentosMateriaPrima,
   filtrarLancamentosProdutosGerados,
+  filtrarSaldoEmbalagem,
   filtrarSaldoEnergia,
   filtrarSaldoMateriaPrima,
   filtrarSaldoProdutosGerados,
@@ -111,16 +113,20 @@ export function gerarPdfEstoque(data: AppData) {
   const saldoMateriaPrima = filtrarSaldoMateriaPrima(saldo);
   const saldoProdutosGerados = filtrarSaldoProdutosGerados(saldo, data.producoes);
   const saldoEnergia = filtrarSaldoEnergia(saldo);
+  const saldoEmbalagem = filtrarSaldoEmbalagem(saldo);
   const lancamentosMateriaPrima = filtrarLancamentosMateriaPrima(data.estoque);
   const lancamentosProdutosGerados = filtrarLancamentosProdutosGerados(data.estoque, data.producoes);
   const lancamentosEnergia = filtrarLancamentosEnergia(data.estoque);
+  const lancamentosEmbalagem = filtrarLancamentosEmbalagem(data.estoque);
 
   let y = tabelaSaldoPdf(doc, 'Matérias-primas', saldoMateriaPrima, 52);
   y = tabelaSaldoPdf(doc, 'Produtos gerados', saldoProdutosGerados, y + 12);
   y = tabelaSaldoPdf(doc, 'Gás de cozinha', saldoEnergia, y + 12);
+  y = tabelaSaldoPdf(doc, 'Embalagem', saldoEmbalagem, y + 12);
   y = tabelaLancamentosPdf(doc, 'Lançamentos — Matérias-primas', lancamentosMateriaPrima, y + 12);
   y = tabelaLancamentosPdf(doc, 'Lançamentos — Produtos gerados', lancamentosProdutosGerados, y + 12);
-  tabelaLancamentosPdf(doc, 'Lançamentos — Gás de cozinha', lancamentosEnergia, y + 12);
+  y = tabelaLancamentosPdf(doc, 'Lançamentos — Gás de cozinha', lancamentosEnergia, y + 12);
+  tabelaLancamentosPdf(doc, 'Lançamentos — Embalagem', lancamentosEmbalagem, y + 12);
 
   savePdf(doc, `estoque-${new Date().toISOString().slice(0, 10)}.pdf`);
 }
@@ -343,10 +349,12 @@ export function gerarPdfDashboard(data: AppData) {
   const saldoMateriaPrima = filtrarSaldoMateriaPrima(saldoEstoque);
   const saldoProdutosGerados = filtrarSaldoProdutosGerados(saldoEstoque, data.producoes);
   const saldoEnergia = filtrarSaldoEnergia(saldoEstoque);
+  const saldoEmbalagem = filtrarSaldoEmbalagem(saldoEstoque);
   const valorMateriaPrima = sumBy(saldoMateriaPrima, (i) => i.quantidade * i.valorUnit);
   const valorProdutosGerados = sumBy(saldoProdutosGerados, (i) => i.quantidade * i.valorUnit);
   const valorEnergia = sumBy(saldoEnergia, (i) => i.quantidade * i.valorUnit);
-  const valorEstoque = valorMateriaPrima + valorProdutosGerados + valorEnergia;
+  const valorEmbalagem = sumBy(saldoEmbalagem, (i) => i.quantidade * i.valorUnit);
+  const valorEstoque = valorMateriaPrima + valorProdutosGerados + valorEnergia + valorEmbalagem;
   const totalCompras = sumBy(data.compras, (c) => c.total);
   const totalVendas = sumBy(data.vendas.filter((v) => isVendaConcluida(v)), (v) => v.total);
   const saldoCaixa =
@@ -379,6 +387,7 @@ export function gerarPdfDashboard(data: AppData) {
       ['Itens produtos gerados', saldoProdutosGerados.length.toString()],
       ['Valor produtos gerados (custo)', formatCurrency(valorProdutosGerados)],
       ['Gás de cozinha', formatCurrency(valorEnergia)],
+      ['Embalagem', formatCurrency(valorEmbalagem)],
       ['Valor potencial de venda', formatCurrency(resumoPreco.totais.valorVendaTotal)],
       ['Lucro potencial', formatCurrency(resumoPreco.totais.lucroPotencialTotal)],
       ['Valor total operacional', formatCurrency(valorEstoque)],

@@ -78,6 +78,15 @@ const ALIASES_ENERGIA = new Set([
   'gas glp',
 ]);
 
+const ALIASES_EMBALAGEM = new Set([
+  'embalagem',
+  'embalagens',
+  'rotulo',
+  'rotulos',
+  'etiqueta',
+  'etiquetas',
+]);
+
 /** Gás de cozinha (GLP) e equivalentes — insumo de energia da produção. */
 export function ehInsumoEnergia(nome: string): boolean {
   const key = normalizarNomeItem(nome);
@@ -87,6 +96,14 @@ export function ehInsumoEnergia(nome: string): boolean {
   if (/\bbotijao\b/.test(key)) return true;
   if (/\bglp\b/.test(key)) return true;
   return /^gas\b/.test(key);
+}
+
+/** Embalagem, rótulo e equivalentes — insumo de custo da produção (não entra na perda de massa). */
+export function ehInsumoEmbalagem(nome: string): boolean {
+  const key = normalizarNomeItem(nome);
+  if (!key) return false;
+  if (ALIASES_EMBALAGEM.has(key)) return true;
+  return key.includes('embalagem');
 }
 
 /** Insumos da cadeia que entram no estoque como matéria-prima (compra ou torra). */
@@ -105,6 +122,7 @@ export function tipoEstoqueCadeia(nome: string, fallback: TipoItem = 'ProdutoAca
   if (ehMateriaPrimaCadeia(nome)) return 'MateriaPrima';
   if (ehProdutoGeradoCadeia(nome)) return 'ProdutoAcabado';
   if (ehInsumoEnergia(nome)) return 'Energia';
+  if (ehInsumoEmbalagem(nome)) return 'Embalagem';
   return fallback ?? 'MateriaPrima';
 }
 
@@ -113,6 +131,7 @@ export function tipoCadeiaFixo(nome: string): TipoItem | null {
   if (ehMateriaPrimaCadeia(nome)) return 'MateriaPrima';
   if (ehProdutoGeradoCadeia(nome)) return 'ProdutoAcabado';
   if (ehInsumoEnergia(nome)) return 'Energia';
+  if (ehInsumoEmbalagem(nome)) return 'Embalagem';
   return null;
 }
 

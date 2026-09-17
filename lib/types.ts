@@ -63,7 +63,7 @@ export interface ProdutoGeradoProducao {
   nome: string;
   quantidade: number;
   unidade: string;
-  /** Custo rateado por massa a partir do custo total (matéria-prima + gás). */
+  /** Custo rateado por massa a partir do custo total (matéria-prima + gás + embalagem). */
   custoAlocado?: number;
 }
 
@@ -85,7 +85,7 @@ export interface Producao {
     quantidade: number;
     valorUnit: number;
     unidade?: string;
-    /** MateriaPrima (compra), ProdutoAcabado (etapa anterior) ou Energia (gás de cozinha). */
+    /** MateriaPrima (compra), ProdutoAcabado (etapa anterior), Energia (gás) ou Embalagem. */
     tipo?: TipoItem;
   }>;
   custoEstimado: number;

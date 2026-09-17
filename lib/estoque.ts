@@ -1,4 +1,9 @@
-import { ehInsumoEnergia, ehMateriaPrimaCadeia, tipoEstoqueCadeia } from '@/lib/cadeia-producao';
+import {
+  ehInsumoEmbalagem,
+  ehInsumoEnergia,
+  ehMateriaPrimaCadeia,
+  tipoEstoqueCadeia,
+} from '@/lib/cadeia-producao';
 import { arredondarQuantidade, formatQuantidadeUnidade } from '@/lib/format';
 import type {
   Compra,
@@ -199,22 +204,36 @@ export function saldoIngredienteProducao(
 }
 
 export interface IngredienteProducaoDisponivel extends SaldoEstoque {
-  origem: 'compra' | 'producao' | 'energia';
+  origem: 'compra' | 'producao' | 'energia' | 'embalagem';
 }
 
 const ORDEM_ORIGEM_INSUMO: Record<IngredienteProducaoDisponivel['origem'], number> = {
   compra: 0,
   producao: 1,
   energia: 2,
+  embalagem: 3,
 };
 
-/** Energia (gás) entra no custo do lote, mas não na perda de massa. */
-export function ehInsumoCustoProducao(ingrediente: {
+type IngredienteCusto = {
   nome: string;
   tipo?: TipoItem;
-}): boolean {
+};
+
+/** Gás de cozinha — custo do lote, fora da perda de massa. */
+export function ehInsumoEnergiaProducao(ingrediente: IngredienteCusto): boolean {
   if (ehInsumoEnergia(ingrediente.nome)) return true;
   return ingrediente.tipo === 'Energia';
+}
+
+/** Embalagem — custo do lote, fora da perda de massa. */
+export function ehInsumoEmbalagemProducao(ingrediente: IngredienteCusto): boolean {
+  if (ehInsumoEmbalagem(ingrediente.nome)) return true;
+  return ingrediente.tipo === 'Embalagem';
+}
+
+/** Energia (gás) e embalagem entram no custo do lote, mas não na perda de massa. */
+export function ehInsumoCustoProducao(ingrediente: IngredienteCusto): boolean {
+  return ehInsumoEnergiaProducao(ingrediente) || ehInsumoEmbalagemProducao(ingrediente);
 }
 
 export function ingredientesMassaProducao(
@@ -226,7 +245,13 @@ export function ingredientesMassaProducao(
 export function insumosEnergiaProducao(
   ingredientes: Producao['ingredientes']
 ): Producao['ingredientes'] {
-  return ingredientes.filter((ing) => ehInsumoCustoProducao(ing));
+  return ingredientes.filter((ing) => ehInsumoEnergiaProducao(ing));
+}
+
+export function insumosEmbalagemProducao(
+  ingredientes: Producao['ingredientes']
+): Producao['ingredientes'] {
+  return ingredientes.filter((ing) => ehInsumoEmbalagemProducao(ing));
 }
 
 export function custoItensProducao(
@@ -243,6 +268,10 @@ export function custoEnergiaProducao(ingredientes: Producao['ingredientes']): nu
   return custoItensProducao(insumosEnergiaProducao(ingredientes));
 }
 
+export function custoEmbalagemProducao(ingredientes: Producao['ingredientes']): number {
+  return custoItensProducao(insumosEmbalagemProducao(ingredientes));
+}
+
 export function ingredientesProducaoDisponiveis(
   estoque: EstoqueItem[],
   producoes: Producao[]
@@ -252,7 +281,7 @@ export function ingredientesProducaoDisponiveis(
   return agruparEstoquePorNomeTipo(estoque)
     .filter((s) => {
       if (s.quantidade <= 0) return false;
-      if (s.tipo === 'MateriaPrima' || s.tipo === 'Energia') return true;
+      if (s.tipo === 'MateriaPrima' || s.tipo === 'Energia' || s.tipo === 'Embalagem') return true;
       return s.tipo === 'ProdutoAcabado' && nomesProduzidos.has(s.nome.toLowerCase());
     })
     .map((s) => ({
@@ -260,9 +289,11 @@ export function ingredientesProducaoDisponiveis(
       origem:
         s.tipo === 'Energia'
           ? ('energia' as const)
-          : s.tipo === 'ProdutoAcabado'
-            ? ('producao' as const)
-            : ('compra' as const),
+          : s.tipo === 'Embalagem'
+            ? ('embalagem' as const)
+            : s.tipo === 'ProdutoAcabado'
+              ? ('producao' as const)
+              : ('compra' as const),
     }))
     .sort((a, b) => {
       const origemCmp = ORDEM_ORIGEM_INSUMO[a.origem] - ORDEM_ORIGEM_INSUMO[b.origem];
@@ -285,7 +316,7 @@ export function validarIngredientesProducao(
     if (!saldo || saldo.quantidade <= 0) {
       const lista =
         disponiveis.length > 0
-          ? `\n\nIngredientes disponíveis:\n${disponiveis.map((d) => `  — ${d.nome}${d.origem === 'producao' ? ' (produzido)' : d.origem === 'energia' ? ' (gás)' : ''}`).join('\n')}`
+          ? `\n\nIngredientes disponíveis:\n${disponiveis.map((d) => `  — ${d.nome}${d.origem === 'producao' ? ' (produzido)' : d.origem === 'energia' ? ' (gás)' : d.origem === 'embalagem' ? ' (embalagem)' : ''}`).join('\n')}`
           : '\n\nNenhum ingrediente com saldo no estoque.';
       return `Ingrediente "${ing.nome}" não existe no estoque.${lista}`;
     }
@@ -314,6 +345,7 @@ export interface ItemCatalogo {
 const ITENS_CONHECIDOS_ESTOQUE: ItemCatalogo[] = [
   { nome: 'Amêndoa Torrada', tipo: 'MateriaPrima', unidade: 'kg', valorUnit: 0 },
   { nome: 'Gás de Cozinha', tipo: 'Energia', unidade: 'kg', valorUnit: 0 },
+  { nome: 'Embalagem', tipo: 'Embalagem', unidade: 'un', valorUnit: 0 },
 ];
 
 export function catalogoItensLancados(compras: Compra[], estoque: EstoqueItem[]): ItemCatalogo[] {
@@ -424,7 +456,7 @@ export function totalSaidaProdutos(
   return { total, unidade };
 }
 
-/** Rateia o custo total do lote (matéria-prima + gás) por massa entre os produtos de saída. */
+/** Rateia o custo total do lote (matéria-prima + gás + embalagem) por massa entre os produtos de saída. */
 export function alocarCustoEntreProdutos(
   custoTotal: number,
   produtos: ProdutoGeradoProducao[]
@@ -547,6 +579,8 @@ export function filtrarSaldoProdutosGerados(
     .filter(
       (s) =>
         s.tipo !== 'MateriaPrima' &&
+        s.tipo !== 'Energia' &&
+        s.tipo !== 'Embalagem' &&
         !ehMateriaPrimaCadeia(s.nome) &&
         nomes.has(s.nome.toLowerCase())
     )
@@ -571,6 +605,18 @@ export function filtrarLancamentosEnergia(estoque: EstoqueItem[]): EstoqueItem[]
     .sort((a, b) => (b.data ?? '').localeCompare(a.data ?? '') || b.id - a.id);
 }
 
+export function filtrarSaldoEmbalagem(saldo: SaldoEstoque[]): SaldoEstoque[] {
+  return saldo
+    .filter((s) => s.tipo === 'Embalagem')
+    .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+}
+
+export function filtrarLancamentosEmbalagem(estoque: EstoqueItem[]): EstoqueItem[] {
+  return estoque
+    .filter((e) => e.quantidade > 0 && e.tipo === 'Embalagem')
+    .sort((a, b) => (b.data ?? '').localeCompare(a.data ?? '') || b.id - a.id);
+}
+
 export function filtrarLancamentosProdutosGerados(
   estoque: EstoqueItem[],
   producoes: Producao[]
@@ -581,6 +627,8 @@ export function filtrarLancamentosProdutosGerados(
       (e) =>
         e.quantidade > 0 &&
         e.tipo !== 'MateriaPrima' &&
+        e.tipo !== 'Energia' &&
+        e.tipo !== 'Embalagem' &&
         !ehMateriaPrimaCadeia(e.nome) &&
         nomes.has(e.nome.toLowerCase())
     )
