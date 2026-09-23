@@ -29,6 +29,18 @@ function vendaLancaRecebimento(venda) {
   return isVendaPaga(venda);
 }
 
+function entregaAguardandoConfirmacao(venda) {
+  return normalizarEntregaVenda(venda.entrega, venda.status) === 'a_entregar';
+}
+
+function resumoAEntregar(vendas) {
+  const abertas = vendas.filter((v) => entregaAguardandoConfirmacao(v));
+  return {
+    quantidade: abertas.length,
+    valorTotal: Math.round(abertas.reduce((acc, v) => acc + v.total, 0) * 100) / 100,
+  };
+}
+
 function resumoAReceber(vendas) {
   const abertas = vendas.filter((v) => !isVendaPaga(v));
   return {
@@ -72,5 +84,19 @@ const resumo = resumoAReceber([
 ]);
 assert(resumo.quantidade === 2, 'a receber conta pendente e concluída em aberto');
 assert(resumo.valorTotal === 100.5, 'valor em aberto soma só o que não foi pago');
+
+assert(entregaAguardandoConfirmacao(concluidaAberta), 'concluída a entregar espera confirmação');
+assert(entregaAguardandoConfirmacao(pendenteAberta), 'pendente a entregar espera confirmação');
+assert(!entregaAguardandoConfirmacao(concluidaPaga), 'retirada não pede confirmação de entrega');
+assert(!entregaAguardandoConfirmacao({ status: 'concluida', entrega: 'entregue' }), 'entregue já está confirmada');
+
+const aEntregar = resumoAEntregar([
+  { ...concluidaAberta, total: 80 },
+  { ...pendenteAberta, total: 20.5 },
+  { ...concluidaPaga, total: 100 },
+  { status: 'concluida', entrega: 'entregue', pago: 'pago', total: 15 },
+]);
+assert(aEntregar.quantidade === 2, 'a entregar conta só quem ainda não confirmou');
+assert(aEntregar.valorTotal === 100.5, 'valor a entregar soma as entregas em aberto');
 
 console.log('OK — entrega e pago em vendas');

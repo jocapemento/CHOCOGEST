@@ -71,6 +71,11 @@ export function isVendaPaga(venda: Pick<Venda, 'pago' | 'status'>): boolean {
   return pagoDaVenda(venda) === 'pago';
 }
 
+/** Ainda falta registrar que o pedido chegou ao cliente. */
+export function entregaAguardandoConfirmacao(venda: Pick<Venda, 'entrega' | 'status'>): boolean {
+  return entregaDaVenda(venda) === 'a_entregar';
+}
+
 /** Estoque baixa só na venda concluída. Recebimento segue `pago`, à parte. */
 export function vendaBaixaEstoque(venda: Pick<Venda, 'status'>): boolean {
   return isVendaConcluida(venda);
@@ -200,6 +205,15 @@ export interface ResumoAReceber {
 /** Vendas marcadas como A receber (pendentes ou concluídas). */
 export function resumoAReceber(vendas: Venda[]): ResumoAReceber {
   const abertas = vendas.filter((v) => !isVendaPaga(v));
+  return {
+    quantidade: abertas.length,
+    valorTotal: Math.round(sumBy(abertas, (v) => v.total) * 100) / 100,
+  };
+}
+
+/** Vendas em A entregar, à espera da confirmação de entrega. */
+export function resumoAEntregar(vendas: Venda[]): ResumoAReceber {
+  const abertas = vendas.filter((v) => entregaAguardandoConfirmacao(v));
   return {
     quantidade: abertas.length,
     valorTotal: Math.round(sumBy(abertas, (v) => v.total) * 100) / 100,

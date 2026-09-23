@@ -100,6 +100,7 @@ import {
 import {
   ENTREGA_VENDA_LABEL,
   ENTREGA_VENDA_OPCOES,
+  entregaAguardandoConfirmacao,
   entregaDaVenda,
   formatarDescontoVenda,
   isVendaConcluida,
@@ -111,6 +112,7 @@ import {
   produtosReservadosPendentes,
   rankingMelhoresClientes,
   rankingProdutosMaisVendidos,
+  resumoAEntregar,
   resumoAReceber,
   resumoVendasPendentes,
   saldoLivreParaVenda,
@@ -1454,6 +1456,53 @@ export default function ChocoGest() {
     alert('Recebimento lançado.');
   };
 
+  const confirmarEntregaVenda = (id: number) => {
+    const venda = data.vendas.find((v) => v.id === id);
+    if (!venda || !entregaAguardandoConfirmacao(venda)) return;
+
+    const pendente = !isVendaConcluida(venda);
+    if (pendente) {
+      const erro = validarEstoqueVenda(data.estoque, { ...venda, status: 'concluida' });
+      if (erro) return alert(erro);
+    }
+
+    const msg = pendente
+      ? `Confirmar entrega para ${venda.cliente}? O pedido fica Entregue e o estoque será baixado.`
+      : `Confirmar entrega para ${venda.cliente}?`;
+    if (!confirm(msg)) return;
+
+    if (vendaEditandoId === id) {
+      setNovaVenda((p) => ({
+        ...p,
+        entrega: 'entregue',
+        status: pendente ? 'concluida' : p.status,
+      }));
+    }
+
+    update((prev) => {
+      const atual = prev.vendas.find((v) => v.id === id);
+      if (!atual || !entregaAguardandoConfirmacao(atual)) return prev;
+      const confirmada: Venda = {
+        ...atual,
+        entrega: 'entregue',
+        status: isVendaConcluida(atual) ? (atual.status ?? 'concluida') : 'concluida',
+      };
+      if (isVendaConcluida(atual)) {
+        return {
+          ...prev,
+          vendas: prev.vendas.map((v) => (v.id === id ? confirmada : v)),
+        };
+      }
+      const state: AppData = {
+        ...prev,
+        vendas: prev.vendas.map((v) => (v.id === id ? confirmada : v)),
+        estoque: baixarEstoqueFifo(prev.estoque, confirmada.itens),
+      };
+      return lancarRecebimentoVenda(state, confirmada, confirmada.data);
+    });
+    alert('Entrega confirmada.');
+  };
+
   const adicionarIngrediente = () => {
     if (!ingredienteForm.nome.trim()) {
       return alert('Selecione um ingrediente do estoque.');
@@ -2150,6 +2199,7 @@ export default function ChocoGest() {
   const vendasPendentes = useMemo(() => listarVendasPendentes(data.vendas), [data.vendas]);
   const resumoPendentes = useMemo(() => resumoVendasPendentes(data.vendas), [data.vendas]);
   const aReceber = useMemo(() => resumoAReceber(data.vendas), [data.vendas]);
+  const aEntregar = useMemo(() => resumoAEntregar(data.vendas), [data.vendas]);
   const reservasPendentes = useMemo(() => produtosReservadosPendentes(data.vendas), [data.vendas]);
   const vendasConcluidas = useMemo(
     () =>
@@ -3282,7 +3332,7 @@ export default function ChocoGest() {
                   <strong>Concluída</strong> baixa o estoque.{' '}
                   <strong>Pago</strong> lança o recebimento no Caixa (Dinheiro) ou no Banco.{' '}
                   <strong>A receber</strong> deixa o valor em aberto até marcar como Pago.{' '}
-                  <strong>Entrega:</strong> Retirada, A entregar ou Entregue.
+                  <strong>A entregar</strong> espera o botão <strong>Confirmar entrega</strong>. Se o pedido ainda estiver pendente, essa confirmação também baixa o estoque.
                 </p>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
                   <Field label="Produto">
@@ -3405,6 +3455,22 @@ export default function ChocoGest() {
                   {vendaEditandoId !== null && (
                     <Btn variant="secondary" onClick={cancelarEdicaoVenda}>Cancelar</Btn>
                   )}
+                </div>
+              </Card>
+              <Card className="mb-6">
+                <h4 className="text-amber-200 font-medium mb-1">A entregar</h4>
+                <p className="text-amber-400/70 text-xs mb-3">
+                  Vendas em <strong>A entregar</strong>. Use <strong>Confirmar entrega</strong> quando o pedido chegar ao cliente.
+                </p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="bg-[#2c2118] rounded-xl p-3">
+                    <div className="text-amber-400/70 text-xs">Vendas</div>
+                    <div className="text-xl font-bold text-amber-100">{aEntregar.quantidade}</div>
+                  </div>
+                  <div className="bg-[#2c2118] rounded-xl p-3">
+                    <div className="text-amber-400/70 text-xs">Valor</div>
+                    <div className="text-xl font-bold text-amber-100">{formatCurrency(aEntregar.valorTotal)}</div>
+                  </div>
                 </div>
               </Card>
               <Card className="mb-6">
@@ -3550,6 +3616,11 @@ export default function ChocoGest() {
                             </td>
                             <td className="py-2 text-right whitespace-nowrap">
                               <div className="flex flex-wrap justify-end gap-1">
+                                {entregaAguardandoConfirmacao(v) && (
+                                  <Btn variant="primary" onClick={() => confirmarEntregaVenda(v.id)}>
+                                    Confirmar entrega
+                                  </Btn>
+                                )}
                                 {!isVendaPaga(v) && (
                                   <Btn variant="primary" onClick={() => receberVenda(v.id)}>
                                     Receber
@@ -3648,6 +3719,11 @@ export default function ChocoGest() {
                           </td>
                           <td className="py-2 text-right whitespace-nowrap">
                             <div className="flex flex-wrap justify-end gap-1">
+                              {entregaAguardandoConfirmacao(v) && (
+                                <Btn variant="primary" onClick={() => confirmarEntregaVenda(v.id)}>
+                                  Confirmar entrega
+                                </Btn>
+                              )}
                               {!isVendaPaga(v) && (
                                 <Btn variant="primary" onClick={() => receberVenda(v.id)}>
                                   Receber
