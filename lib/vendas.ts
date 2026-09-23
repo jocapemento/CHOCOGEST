@@ -5,15 +5,79 @@ import {
   formatQuantidade,
   formatQuantidadeUnidade,
 } from '@/lib/format';
-import type { EstoqueItem, ItemMovimentacao, StatusVenda, TipoDescontoVenda, Venda } from '@/lib/types';
+import type {
+  EntregaVenda,
+  EstoqueItem,
+  ItemMovimentacao,
+  SituacaoPagoVenda,
+  StatusVenda,
+  TipoDescontoVenda,
+  Venda,
+} from '@/lib/types';
 
 export const STATUS_VENDA_LABEL: Record<StatusVenda, string> = {
   em_processamento: 'Pendente',
   concluida: 'Concluída',
 };
 
-export function isVendaConcluida(venda: Venda): boolean {
+export const ENTREGA_VENDA_OPCOES: EntregaVenda[] = ['retirada', 'a_entregar', 'entregue'];
+
+export const ENTREGA_VENDA_LABEL: Record<EntregaVenda, string> = {
+  retirada: 'Retirada',
+  a_entregar: 'A entregar',
+  entregue: 'Entregue',
+};
+
+export const PAGO_VENDA_OPCOES: SituacaoPagoVenda[] = ['pago', 'a_receber'];
+
+export const PAGO_VENDA_LABEL: Record<SituacaoPagoVenda, string> = {
+  pago: 'Pago',
+  a_receber: 'A receber',
+};
+
+export function isVendaConcluida(venda: Pick<Venda, 'status'>): boolean {
   return (venda.status ?? 'concluida') === 'concluida';
+}
+
+/** Venda antiga sem o campo segue o status: pendente ainda vai entregar; concluída já saiu. */
+export function normalizarEntregaVenda(
+  entrega: unknown,
+  status?: StatusVenda
+): EntregaVenda {
+  if (entrega === 'retirada' || entrega === 'a_entregar' || entrega === 'entregue') {
+    return entrega;
+  }
+  return status === 'em_processamento' ? 'a_entregar' : 'entregue';
+}
+
+/** Venda antiga sem o campo: pendente fica a receber; concluída já lançou o recebimento. */
+export function normalizarPagoVenda(
+  pago: unknown,
+  status?: StatusVenda
+): SituacaoPagoVenda {
+  if (pago === 'pago' || pago === 'a_receber') return pago;
+  return status === 'em_processamento' ? 'a_receber' : 'pago';
+}
+
+export function entregaDaVenda(venda: Pick<Venda, 'entrega' | 'status'>): EntregaVenda {
+  return normalizarEntregaVenda(venda.entrega, venda.status);
+}
+
+export function pagoDaVenda(venda: Pick<Venda, 'pago' | 'status'>): SituacaoPagoVenda {
+  return normalizarPagoVenda(venda.pago, venda.status);
+}
+
+export function isVendaPaga(venda: Pick<Venda, 'pago' | 'status'>): boolean {
+  return pagoDaVenda(venda) === 'pago';
+}
+
+/** Estoque baixa só na venda concluída. Recebimento segue `pago`, à parte. */
+export function vendaBaixaEstoque(venda: Pick<Venda, 'status'>): boolean {
+  return isVendaConcluida(venda);
+}
+
+export function vendaLancaRecebimento(venda: Pick<Venda, 'pago' | 'status'>): boolean {
+  return isVendaPaga(venda);
 }
 
 export function isVendaPendente(venda: Venda): boolean {
@@ -125,6 +189,20 @@ export function resumoVendasPendentes(vendas: Venda[]): ResumoVendasPendentes {
     valorTotal: Math.round(sumBy(pendentes, (v) => v.total) * 100) / 100,
     clientes: clientes.size,
     itensReservados: Math.round(sumBy(pendentes, (v) => totalQuantidadeVenda(v.itens)) * 1000) / 1000,
+  };
+}
+
+export interface ResumoAReceber {
+  quantidade: number;
+  valorTotal: number;
+}
+
+/** Vendas marcadas como A receber (pendentes ou concluídas). */
+export function resumoAReceber(vendas: Venda[]): ResumoAReceber {
+  const abertas = vendas.filter((v) => !isVendaPaga(v));
+  return {
+    quantidade: abertas.length,
+    valorTotal: Math.round(sumBy(abertas, (v) => v.total) * 100) / 100,
   };
 }
 

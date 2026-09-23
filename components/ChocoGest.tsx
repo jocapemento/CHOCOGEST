@@ -16,6 +16,8 @@ import type {
   ProdutoGeradoProducao,
   QuitacaoCartao,
   TipoItem,
+  EntregaVenda,
+  SituacaoPagoVenda,
   StatusVenda,
   TipoDescontoVenda,
   Venda,
@@ -96,12 +98,20 @@ import {
   totalizarProdutosPrecificados,
 } from '@/lib/precificacao';
 import {
+  ENTREGA_VENDA_LABEL,
+  ENTREGA_VENDA_OPCOES,
+  entregaDaVenda,
   formatarDescontoVenda,
   isVendaConcluida,
+  isVendaPaga,
   listarVendasPendentes,
+  PAGO_VENDA_LABEL,
+  PAGO_VENDA_OPCOES,
+  pagoDaVenda,
   produtosReservadosPendentes,
   rankingMelhoresClientes,
   rankingProdutosMaisVendidos,
+  resumoAReceber,
   resumoVendasPendentes,
   saldoLivreParaVenda,
   STATUS_VENDA_LABEL,
@@ -410,19 +420,73 @@ function aplicarMovimentoVenda(
   return { movCaixa: caixa, movBanco: banco };
 }
 
-function reverterEfeitosVenda(prev: AppData, venda: Venda): AppData {
+function removerRecebimentoVenda(prev: AppData, vendaId: number): AppData {
   const { movCaixa, movBanco } = removerMovimentosVenda(
     prev.movimentosCaixa,
     prev.movimentosBanco,
-    venda.id
+    vendaId
   );
+  return { ...prev, movimentosCaixa: movCaixa, movimentosBanco: movBanco };
+}
 
-  return {
-    ...prev,
-    estoque: atualizarEstoqueCompra(prev.estoque, venda.itens),
-    movimentosCaixa: movCaixa,
-    movimentosBanco: movBanco,
-  };
+function recebimentoJaLancado(prev: AppData, vendaId: number): boolean {
+  const ref = `venda-${vendaId}`;
+  return (
+    prev.movimentosCaixa.some((m) => m.referencia === ref) ||
+    prev.movimentosBanco.some((m) => m.referencia === ref)
+  );
+}
+
+function mensagemVendaRegistrada(venda: Venda): string {
+  const concluida = isVendaConcluida(venda);
+  const paga = isVendaPaga(venda);
+  if (concluida && paga) return 'Venda concluída e registrada!';
+  if (!concluida && !paga) {
+    return 'Venda pendente registrada (estoque reservado, sem baixa financeira).';
+  }
+  const estoqueMsg = concluida ? 'estoque baixado' : 'estoque reservado';
+  const dinheiroMsg = paga ? 'recebimento lançado' : 'a receber, sem lançamento no financeiro';
+  return `Venda registrada (${estoqueMsg}; ${dinheiroMsg}).`;
+}
+
+/** Inclui o recebimento se está Pago e ainda não há lançamento. Não mexe no estoque. */
+function lancarRecebimentoVenda(prev: AppData, venda: Venda, dataOperacao: string): AppData {
+  if (!isVendaPaga(venda) || recebimentoJaLancado(prev, venda.id)) return prev;
+  const { movCaixa, movBanco } = aplicarMovimentoVenda(
+    prev.movimentosCaixa,
+    prev.movimentosBanco,
+    venda,
+    venda.total,
+    dataOperacao,
+    prev.bancos[0]?.nome
+  );
+  return { ...prev, movimentosCaixa: movCaixa, movimentosBanco: movBanco };
+}
+
+/** Repõe estoque só se a venda tinha baixado; tira o recebimento se tinha lançado. */
+function reverterEfeitosVenda(prev: AppData, venda: Venda): AppData {
+  const semEstoque = isVendaConcluida(venda)
+    ? { ...prev, estoque: atualizarEstoqueCompra(prev.estoque, venda.itens) }
+    : prev;
+  return removerRecebimentoVenda(semEstoque, venda.id);
+}
+
+/** Baixa estoque na concluída e lança recebimento só quando está Pago. */
+function aplicarEfeitosVenda(prev: AppData, venda: Venda, dataOperacao: string): AppData {
+  const comEstoque = isVendaConcluida(venda)
+    ? { ...prev, estoque: baixarEstoqueFifo(prev.estoque, venda.itens) }
+    : prev;
+  const semRecebimento = removerRecebimentoVenda(comEstoque, venda.id);
+  if (!isVendaPaga(venda)) return semRecebimento;
+  const { movCaixa, movBanco } = aplicarMovimentoVenda(
+    semRecebimento.movimentosCaixa,
+    semRecebimento.movimentosBanco,
+    venda,
+    venda.total,
+    dataOperacao,
+    semRecebimento.bancos[0]?.nome
+  );
+  return { ...semRecebimento, movimentosCaixa: movCaixa, movimentosBanco: movBanco };
 }
 
 function ingredientesProducaoParaItens(
@@ -552,6 +616,8 @@ const VENDA_FORM_INICIAL = {
   cliente: '',
   formaPagamento: 'Dinheiro',
   status: 'concluida' as StatusVenda,
+  entrega: 'retirada' as EntregaVenda,
+  pago: 'pago' as SituacaoPagoVenda,
   descontoTipo: '' as TipoDescontoVenda | '',
   desconto: 0,
   itens: [] as ItemMovimentacao[],
@@ -655,6 +721,42 @@ function Btn({
     >
       {children}
     </button>
+  );
+}
+
+function Selo({
+  children,
+  tone,
+}: {
+  children: React.ReactNode;
+  tone: 'ok' | 'wait' | 'neutral';
+}) {
+  const styles = {
+    ok: 'bg-emerald-900/50 text-emerald-200',
+    wait: 'bg-amber-900/60 text-amber-100',
+    neutral: 'bg-amber-800/40 text-amber-100',
+  };
+  return (
+    <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${styles[tone]}`}>
+      {children}
+    </span>
+  );
+}
+
+function CelulasEntregaPago({ venda }: { venda: Venda }) {
+  const entrega = entregaDaVenda(venda);
+  const pago = pagoDaVenda(venda);
+  return (
+    <>
+      <td className="py-2">
+        <Selo tone={entrega === 'a_entregar' ? 'wait' : entrega === 'entregue' ? 'ok' : 'neutral'}>
+          {ENTREGA_VENDA_LABEL[entrega]}
+        </Selo>
+      </td>
+      <td className="py-2">
+        <Selo tone={pago === 'pago' ? 'ok' : 'wait'}>{PAGO_VENDA_LABEL[pago]}</Selo>
+      </td>
+    </>
   );
 }
 
@@ -1195,6 +1297,8 @@ export default function ChocoGest() {
       cliente: venda.cliente,
       formaPagamento: venda.formaPagamento,
       status: venda.status ?? 'concluida',
+      entrega: entregaDaVenda(venda),
+      pago: pagoDaVenda(venda),
       descontoTipo: venda.descontoTipo ?? '',
       desconto: venda.desconto ?? 0,
       itens: venda.itens.map((i) => ({ ...i })),
@@ -1215,31 +1319,13 @@ export default function ChocoGest() {
     update((prev) => {
       const venda = prev.vendas.find((v) => v.id === id);
       if (!venda) return prev;
-      const reverted = isVendaConcluida(venda) ? reverterEfeitosVenda(prev, venda) : prev;
+      const reverted = reverterEfeitosVenda(prev, venda);
       return { ...reverted, vendas: reverted.vendas.filter((v) => v.id !== id) };
     });
 
     if (vendaEditandoId === id) {
       resetFormVenda();
     }
-  };
-
-  const aplicarEfeitosVenda = (prev: AppData, venda: Venda, dataOperacao: string) => {
-    const { movCaixa, movBanco } = aplicarMovimentoVenda(
-      prev.movimentosCaixa,
-      prev.movimentosBanco,
-      venda,
-      venda.total,
-      dataOperacao,
-      prev.bancos[0]?.nome
-    );
-
-    return {
-      ...prev,
-      estoque: baixarEstoqueFifo(prev.estoque, venda.itens),
-      movimentosCaixa: movCaixa,
-      movimentosBanco: movBanco,
-    };
   };
 
   const registrarVenda = () => {
@@ -1266,6 +1352,8 @@ export default function ChocoGest() {
       cliente: novaVenda.cliente.trim(),
       formaPagamento: novaVenda.formaPagamento,
       status: novaVenda.status,
+      entrega: novaVenda.entrega,
+      pago: novaVenda.pago,
       total,
       ...(temDesconto ? { descontoTipo, desconto: descontoInformado } : {}),
       itens: novaVenda.itens,
@@ -1296,32 +1384,19 @@ export default function ChocoGest() {
         const antiga = prev.vendas.find((v) => v.id === vendaEditandoId);
         if (!antiga) return prev;
 
-        let state = isVendaConcluida(antiga) ? reverterEfeitosVenda(prev, antiga) : prev;
+        let state = reverterEfeitosVenda(prev, antiga);
         state = {
           ...state,
           vendas: state.vendas.map((v) => (v.id === vendaEditandoId ? venda : v)),
         };
-        if (isVendaConcluida(venda)) {
-          state = aplicarEfeitosVenda(state, venda, dataOperacao);
-        }
-        return state;
+        return aplicarEfeitosVenda(state, venda, dataOperacao);
       }
 
-      let state: AppData = { ...prev, vendas: [...prev.vendas, venda] };
-      if (isVendaConcluida(venda)) {
-        state = aplicarEfeitosVenda(state, venda, dataOperacao);
-      }
-      return state;
+      return aplicarEfeitosVenda({ ...prev, vendas: [...prev.vendas, venda] }, venda, dataOperacao);
     });
 
     resetFormVenda();
-    alert(
-      editando
-        ? 'Venda atualizada com sucesso!'
-        : isVendaConcluida(venda)
-          ? 'Venda concluída e registrada!'
-          : 'Venda pendente registrada (estoque reservado, sem baixa financeira).'
-    );
+    alert(editando ? 'Venda atualizada com sucesso!' : mensagemVendaRegistrada(venda));
   };
 
   const concluirVenda = (id: number) => {
@@ -1332,7 +1407,10 @@ export default function ChocoGest() {
     const erro = validarEstoqueVenda(data.estoque, vendaConcluida);
     if (erro) return alert(erro);
 
-    if (!confirm(`Concluir venda para ${venda.cliente}? O estoque será baixado e o financeiro atualizado.`)) {
+    const financeiroMsg = isVendaPaga(venda)
+      ? 'O recebimento já está lançado.'
+      : 'O valor continua a receber.';
+    if (!confirm(`Concluir venda para ${venda.cliente}? O estoque será baixado. ${financeiroMsg}`)) {
       return;
     }
 
@@ -1340,12 +1418,40 @@ export default function ChocoGest() {
       const atual = prev.vendas.find((v) => v.id === id);
       if (!atual || isVendaConcluida(atual)) return prev;
       const concluida: Venda = { ...atual, status: 'concluida' };
-      const state = aplicarEfeitosVenda(prev, concluida, concluida.data);
-      return {
-        ...state,
-        vendas: state.vendas.map((v) => (v.id === id ? concluida : v)),
+      let state: AppData = {
+        ...prev,
+        vendas: prev.vendas.map((v) => (v.id === id ? concluida : v)),
+        estoque: baixarEstoqueFifo(prev.estoque, concluida.itens),
       };
+      state = lancarRecebimentoVenda(state, concluida, concluida.data);
+      return state;
     });
+  };
+
+  const receberVenda = (id: number) => {
+    const venda = data.vendas.find((v) => v.id === id);
+    if (!venda || isVendaPaga(venda)) return;
+    if (
+      !confirm(
+        `Lançar recebimento de ${formatCurrency(venda.total)} (${venda.formaPagamento}) de ${venda.cliente}?`
+      )
+    ) {
+      return;
+    }
+    if (vendaEditandoId === id) {
+      setNovaVenda((p) => ({ ...p, pago: 'pago' }));
+    }
+    update((prev) => {
+      const atual = prev.vendas.find((v) => v.id === id);
+      if (!atual || isVendaPaga(atual)) return prev;
+      const paga: Venda = { ...atual, pago: 'pago' };
+      const state: AppData = {
+        ...prev,
+        vendas: prev.vendas.map((v) => (v.id === id ? paga : v)),
+      };
+      return lancarRecebimentoVenda(state, paga, paga.data);
+    });
+    alert('Recebimento lançado.');
   };
 
   const adicionarIngrediente = () => {
@@ -2043,6 +2149,7 @@ export default function ChocoGest() {
   );
   const vendasPendentes = useMemo(() => listarVendasPendentes(data.vendas), [data.vendas]);
   const resumoPendentes = useMemo(() => resumoVendasPendentes(data.vendas), [data.vendas]);
+  const aReceber = useMemo(() => resumoAReceber(data.vendas), [data.vendas]);
   const reservasPendentes = useMemo(() => produtosReservadosPendentes(data.vendas), [data.vendas]);
   const vendasConcluidas = useMemo(
     () =>
@@ -2218,6 +2325,15 @@ export default function ChocoGest() {
                       resumoPendentes.quantidade > 0
                         ? `${resumoPendentes.quantidade} pedido(s) · ${resumoPendentes.itensReservados} un. reservadas`
                         : 'nenhum pedido pendente',
+                  },
+                  {
+                    label: 'A receber',
+                    value: formatCurrency(aReceber.valorTotal),
+                    icon: '🧾',
+                    detalhe:
+                      aReceber.quantidade > 0
+                        ? `${aReceber.quantidade} venda(s) em aberto`
+                        : 'nada em aberto',
                   },
                   { label: 'Saldo Caixa', value: formatCurrency(saldoCaixa), icon: '💰' },
                   { label: 'Saldo Banco', value: formatCurrency(saldoBanco), icon: '🏦' },
@@ -2435,7 +2551,7 @@ export default function ChocoGest() {
                         <span>
                           {formatDate(v.data)} — {v.cliente}{' '}
                           <span className="text-xs text-amber-400/70">
-                            ({STATUS_VENDA_LABEL[v.status ?? 'concluida']})
+                            ({STATUS_VENDA_LABEL[v.status ?? 'concluida']} · {ENTREGA_VENDA_LABEL[entregaDaVenda(v)]} · {PAGO_VENDA_LABEL[pagoDaVenda(v)]})
                           </span>
                         </span>
                         <span className="text-amber-300 shrink-0">{formatCurrency(v.total)}</span>
@@ -3080,6 +3196,36 @@ export default function ChocoGest() {
                       <option>Dinheiro</option><option>Pix</option><option>Cartao</option><option>Transferencia</option>
                     </select>
                   </Field>
+                  <Field label="Entrega">
+                    <select
+                      className={inputCls}
+                      value={novaVenda.entrega}
+                      onChange={(e) =>
+                        setNovaVenda((p) => ({ ...p, entrega: e.target.value as EntregaVenda }))
+                      }
+                    >
+                      {ENTREGA_VENDA_OPCOES.map((opcao) => (
+                        <option key={opcao} value={opcao}>
+                          {ENTREGA_VENDA_LABEL[opcao]}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field label="Pago">
+                    <select
+                      className={inputCls}
+                      value={novaVenda.pago}
+                      onChange={(e) =>
+                        setNovaVenda((p) => ({ ...p, pago: e.target.value as SituacaoPagoVenda }))
+                      }
+                    >
+                      {PAGO_VENDA_OPCOES.map((opcao) => (
+                        <option key={opcao} value={opcao}>
+                          {PAGO_VENDA_LABEL[opcao]}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
                   <Field label="Status">
                     <select
                       className={inputCls}
@@ -3132,9 +3278,11 @@ export default function ChocoGest() {
                   ) : null}
                 </div>
                 <p className="text-amber-400/70 text-xs mb-3">
-                  <strong>Pendente:</strong> entra na relação de vendas pendentes, reserva o produto no
-                  saldo livre e não baixa estoque nem financeiro.{' '}
-                  <strong>Concluída:</strong> baixa estoque e lança recebimento ao salvar.
+                  <strong>Pendente</strong> reserva o produto e não baixa o estoque.{' '}
+                  <strong>Concluída</strong> baixa o estoque.{' '}
+                  <strong>Pago</strong> lança o recebimento no Caixa (Dinheiro) ou no Banco.{' '}
+                  <strong>A receber</strong> deixa o valor em aberto até marcar como Pago.{' '}
+                  <strong>Entrega:</strong> Retirada, A entregar ou Entregue.
                 </p>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
                   <Field label="Produto">
@@ -3259,12 +3407,28 @@ export default function ChocoGest() {
                   )}
                 </div>
               </Card>
+              <Card className="mb-6">
+                <h4 className="text-amber-200 font-medium mb-1">A receber</h4>
+                <p className="text-amber-400/70 text-xs mb-3">
+                  Vendas com Pago em <strong>A receber</strong>, pendentes ou concluídas. O valor ainda não entrou no Caixa nem no Banco.
+                </p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="bg-[#2c2118] rounded-xl p-3">
+                    <div className="text-amber-400/70 text-xs">Vendas</div>
+                    <div className="text-xl font-bold text-amber-100">{aReceber.quantidade}</div>
+                  </div>
+                  <div className="bg-[#2c2118] rounded-xl p-3">
+                    <div className="text-amber-400/70 text-xs">Valor em aberto</div>
+                    <div className="text-xl font-bold text-amber-100">{formatCurrency(aReceber.valorTotal)}</div>
+                  </div>
+                </div>
+              </Card>
               {/* Relação de vendas pendentes */}
               <Card className="mb-6 border border-amber-600/40">
                 <h4 className="text-amber-200 font-medium mb-1">Relação de vendas pendentes</h4>
                 <p className="text-amber-400/70 text-xs mb-4">
-                  Pedidos com status <strong>Pendente</strong>: reservam saldo livre do produto e só
-                  baixam estoque/financeiro ao concluir.
+                  Pedidos com status <strong>Pendente</strong>: reservam saldo livre do produto.
+                  O estoque baixa ao concluir. O recebimento entra quando a venda está <strong>Pago</strong>.
                 </p>
 
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
@@ -3338,15 +3502,17 @@ export default function ChocoGest() {
 
                 {vendasPendentes.length > 0 ? (
                   <div className="table-scroll">
-                    <table className="w-full text-sm min-w-[960px]">
+                    <table className="w-full text-sm min-w-[1100px]">
                       <thead>
                         <tr className="text-amber-300 border-b border-amber-700">
                           <th className="text-left py-2">Data</th>
                           <th className="text-left py-2">Cliente</th>
                           <th className="text-left py-2">Itens reservados</th>
                           <th className="text-left py-2">Pagamento</th>
+                          <th className="text-left py-2">Entrega</th>
+                          <th className="text-left py-2">Pago</th>
                           <th className="text-right py-2">Total</th>
-                          <th className="text-right py-2 min-w-[200px]">Ações</th>
+                          <th className="text-right py-2 min-w-[220px]">Ações</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -3373,6 +3539,7 @@ export default function ChocoGest() {
                               )}
                             </td>
                             <td className="py-2">{v.formaPagamento}</td>
+                            <CelulasEntregaPago venda={v} />
                             <td className="py-2 text-right font-semibold text-amber-100">
                               {formatCurrency(v.total)}
                               {vendaTemDesconto(v) && (
@@ -3383,6 +3550,11 @@ export default function ChocoGest() {
                             </td>
                             <td className="py-2 text-right whitespace-nowrap">
                               <div className="flex flex-wrap justify-end gap-1">
+                                {!isVendaPaga(v) && (
+                                  <Btn variant="primary" onClick={() => receberVenda(v.id)}>
+                                    Receber
+                                  </Btn>
+                                )}
                                 <Btn variant="primary" onClick={() => concluirVenda(v.id)}>
                                   Concluir
                                 </Btn>
@@ -3399,7 +3571,7 @@ export default function ChocoGest() {
                       </tbody>
                       <tfoot>
                         <tr className="font-bold text-amber-100 border-t border-amber-700">
-                          <td colSpan={4} className="py-3 text-right">
+                          <td colSpan={6} className="py-3 text-right">
                             Total pendente
                           </td>
                           <td className="py-3 text-right">
@@ -3421,10 +3593,10 @@ export default function ChocoGest() {
               <Card className="mb-6">
                 <h4 className="text-amber-200 font-medium mb-1">Histórico de vendas concluídas</h4>
                 <p className="text-amber-400/70 text-xs mb-4">
-                  Vendas já finalizadas (estoque baixado e financeiro lançado).
+                  Vendas já finalizadas (estoque baixado). O recebimento entra no financeiro quando está Pago.
                 </p>
                 <div className="table-scroll">
-                  <table className="w-full text-sm min-w-[960px]">
+                  <table className="w-full text-sm min-w-[1100px]">
                     <thead>
                       <tr className="text-amber-300 border-b border-amber-700">
                         <th className="text-left py-2">Data</th>
@@ -3432,8 +3604,10 @@ export default function ChocoGest() {
                         <th className="text-left py-2">Itens</th>
                         <th className="text-left py-2">Status</th>
                         <th className="text-left py-2">Pagamento</th>
+                        <th className="text-left py-2">Entrega</th>
+                        <th className="text-left py-2">Pago</th>
                         <th className="text-right py-2">Total</th>
-                        <th className="text-right py-2 min-w-[160px]">Ações</th>
+                        <th className="text-right py-2 min-w-[200px]">Ações</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -3463,6 +3637,7 @@ export default function ChocoGest() {
                             </span>
                           </td>
                           <td className="py-2">{v.formaPagamento}</td>
+                          <CelulasEntregaPago venda={v} />
                           <td className="py-2 text-right">
                             {formatCurrency(v.total)}
                             {vendaTemDesconto(v) && (
@@ -3473,6 +3648,11 @@ export default function ChocoGest() {
                           </td>
                           <td className="py-2 text-right whitespace-nowrap">
                             <div className="flex flex-wrap justify-end gap-1">
+                              {!isVendaPaga(v) && (
+                                <Btn variant="primary" onClick={() => receberVenda(v.id)}>
+                                  Receber
+                                </Btn>
+                              )}
                               <Btn variant="secondary" onClick={() => editarVenda(v)}>
                                 Editar
                               </Btn>

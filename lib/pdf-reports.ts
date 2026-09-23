@@ -14,10 +14,14 @@ import {
 import { listarEmprestimosCartao, saldoDevedorTotal, totalEmprestadoGeral } from './cartoes';
 import { totalizarProdutosPrecificados } from './precificacao';
 import {
+  ENTREGA_VENDA_LABEL,
+  entregaDaVenda,
   formatarDescontoVenda,
   formatarItensVenda,
   isVendaConcluida,
   listarVendasPendentes,
+  PAGO_VENDA_LABEL,
+  pagoDaVenda,
   produtosReservadosPendentes,
   rankingMelhoresClientes,
   rankingProdutosMaisVendidos,
@@ -179,7 +183,7 @@ export function gerarPdfVendas(data: AppData) {
 
   autoTable(doc, {
     startY: y,
-    head: [['Data', 'Cliente', 'Itens reservados', 'Pagamento', 'Desconto', 'Total']],
+    head: [['Data', 'Cliente', 'Itens reservados', 'Pagamento', 'Entrega', 'Pago', 'Desconto', 'Total']],
     body:
       pendentes.length > 0
         ? pendentes.map((v) => [
@@ -187,10 +191,12 @@ export function gerarPdfVendas(data: AppData) {
             v.cliente,
             formatarItensVenda(v.itens),
             v.formaPagamento,
+            ENTREGA_VENDA_LABEL[entregaDaVenda(v)],
+            PAGO_VENDA_LABEL[pagoDaVenda(v)],
             formatarDescontoVenda(v),
             formatCurrency(v.total),
           ])
-        : [['—', 'Nenhuma venda pendente', '—', '—', '—', '—']],
+        : [['—', 'Nenhuma venda pendente', '—', '—', '—', '—', '—', '—']],
     foot:
       pendentes.length > 0
         ? [
@@ -198,6 +204,8 @@ export function gerarPdfVendas(data: AppData) {
               '',
               `${resumoPend.quantidade} pedido(s) · ${resumoPend.clientes} cliente(s)`,
               `Qtd reservada: ${resumoPend.itensReservados}`,
+              '',
+              '',
               '',
               'Total pendente',
               formatCurrency(resumoPend.valorTotal),
@@ -240,17 +248,19 @@ export function gerarPdfVendas(data: AppData) {
     const totalConcluidas = sumBy(concluidas, (v) => v.total);
     autoTable(doc, {
       startY: y + 4,
-      head: [['Data', 'Cliente', 'Itens (qtd)', 'Status', 'Pagamento', 'Desconto', 'Total']],
+      head: [['Data', 'Cliente', 'Itens (qtd)', 'Status', 'Pagamento', 'Entrega', 'Pago', 'Desconto', 'Total']],
       body: concluidas.map((v) => [
         formatDate(v.data),
         v.cliente,
         formatarItensVenda(v.itens),
         STATUS_VENDA_LABEL.concluida,
         v.formaPagamento,
+        ENTREGA_VENDA_LABEL[entregaDaVenda(v)],
+        PAGO_VENDA_LABEL[pagoDaVenda(v)],
         formatarDescontoVenda(v),
         formatCurrency(v.total),
       ]),
-      foot: [['', '', '', '', '', 'Total concluídas', formatCurrency(totalConcluidas)]],
+      foot: [['', '', '', '', '', '', '', 'Total concluídas', formatCurrency(totalConcluidas)]],
       theme: 'grid',
       headStyles: { fillColor: [180, 83, 9] },
       footStyles: { fillColor: [254, 243, 199], textColor: [60, 40, 30], fontStyle: 'bold' },

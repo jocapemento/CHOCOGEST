@@ -22,6 +22,7 @@ import type {
   Venda,
 } from './types';
 import { arredondarQuantidade, normalizeDateISO, todayISO } from './format';
+import { normalizarEntregaVenda, normalizarPagoVenda } from './vendas';
 
 function asNumber(value: unknown, fallback = 0): number {
   const n = Number(value);
@@ -124,12 +125,15 @@ function normalizeVendas(items: unknown[]): Venda[] {
         ? item.descontoTipo
         : undefined;
     const desconto = descontoTipo ? Math.max(0, asNumber(item.desconto)) : 0;
+    const status = item.status === 'em_processamento' ? 'em_processamento' : 'concluida';
     return {
       id: item.id ?? idx + 1,
       data: normalizeDateISO(item.data, todayISO()),
       cliente: item.cliente ?? '',
       formaPagamento: item.formaPagamento ?? 'Dinheiro',
-      status: item.status === 'em_processamento' ? 'em_processamento' : 'concluida',
+      status,
+      entrega: normalizarEntregaVenda(item.entrega, status),
+      pago: normalizarPagoVenda(item.pago, status),
       total: asNumber(item.total),
       ...(descontoTipo && desconto > 0 ? { descontoTipo, desconto } : {}),
       itens: Array.isArray(item.itens) ? normalizeEstoque(item.itens) : [],

@@ -40,6 +40,12 @@ export interface Compra {
 
 export type StatusVenda = 'em_processamento' | 'concluida';
 
+/** Como o pedido chega ao cliente. */
+export type EntregaVenda = 'retirada' | 'a_entregar' | 'entregue';
+
+/** Se o valor da venda já entrou no caixa ou no banco. */
+export type SituacaoPagoVenda = 'pago' | 'a_receber';
+
 /** Desconto da venda: percentual sobre o subtotal ou valor em reais. */
 export type TipoDescontoVenda = 'percentual' | 'valor';
 
@@ -49,6 +55,10 @@ export interface Venda {
   cliente: string;
   formaPagamento: string;
   status?: StatusVenda;
+  /** Retirada, ainda por entregar ou já entregue. */
+  entrega?: EntregaVenda;
+  /** Pago lança recebimento; a receber fica em aberto. */
+  pago?: SituacaoPagoVenda;
   /** Total líquido (subtotal − desconto). */
   total: number;
   /** Ausente ou indefinido = sem desconto. */
