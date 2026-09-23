@@ -20,6 +20,7 @@ import {
   listarVendasPendentes,
   produtosReservadosPendentes,
   rankingMelhoresClientes,
+  rankingProdutosMaisVendidos,
   resumoVendasPendentes,
   STATUS_VENDA_LABEL,
 } from './vendas';
@@ -253,6 +254,34 @@ export function gerarPdfVendas(data: AppData) {
       theme: 'grid',
       headStyles: { fillColor: [180, 83, 9] },
       footStyles: { fillColor: [254, 243, 199], textColor: [60, 40, 30], fontStyle: 'bold' },
+    });
+  }
+
+  const rankingProdutos = rankingProdutosMaisVendidos(data.vendas);
+  if (rankingProdutos.length > 0) {
+    const lastTable = (doc as jsPDF & { lastAutoTable?: { finalY: number } }).lastAutoTable;
+    const startY = (lastTable?.finalY ?? 52) + 10;
+
+    doc.setFontSize(11);
+    doc.setTextColor(120, 53, 15);
+    doc.text('Produtos mais vendidos', 14, startY);
+
+    autoTable(doc, {
+      startY: startY + 4,
+      head: [['#', 'Produto', 'Última venda', 'Vendas', 'Clientes', 'Qtd vendida', 'Valor total']],
+      body: rankingProdutos.map((p, idx) => [
+        String(idx + 1),
+        p.nome,
+        p.ultimaVenda ? formatDate(p.ultimaVenda) : '—',
+        p.vendasEmProcessamento > 0
+          ? `${p.vendasConcluidas} (+${p.vendasEmProcessamento} pend.)`
+          : String(p.vendasConcluidas),
+        String(p.clientes),
+        formatQuantidadeUnidade(p.quantidadeTotal, p.unidade),
+        p.vendasConcluidas > 0 ? formatCurrency(p.valorTotal) : '—',
+      ]),
+      theme: 'grid',
+      headStyles: { fillColor: [180, 83, 9] },
     });
   }
 

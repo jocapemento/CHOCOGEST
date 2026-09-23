@@ -345,3 +345,82 @@ export function rankingMelhoresClientes(vendas: Venda[]): ResumoClienteVenda[] {
     .filter((r) => r.vendasConcluidas > 0 || r.vendasEmProcessamento > 0)
     .sort((a, b) => b.valorTotal - a.valorTotal || b.quantidadeTotal - a.quantidadeTotal);
 }
+
+export interface ResumoProdutoVendido {
+  nome: string;
+  unidade: string;
+  quantidadeTotal: number;
+  valorTotal: number;
+  vendasConcluidas: number;
+  vendasEmProcessamento: number;
+  clientes: number;
+  /** Data ISO da venda mais recente deste produto. */
+  ultimaVenda: string | null;
+}
+
+/** Ranking de produtos mais vendidos (vendas concluídas), por quantidade. */
+export function rankingProdutosMaisVendidos(vendas: Venda[]): ResumoProdutoVendido[] {
+  type Acc = ResumoProdutoVendido & { clientesSet: Set<string> };
+  const map = new Map<string, Acc>();
+
+  for (const venda of vendas) {
+    const concluida = isVendaConcluida(venda);
+    const clienteKey = (venda.cliente.trim() || 'Sem nome').toLowerCase();
+    const subtotal = subtotalItensVenda(venda.itens);
+    const ratio = subtotal > 0 ? venda.total / subtotal : 1;
+    const produtosNaVenda = new Set<string>();
+
+    for (const item of venda.itens) {
+      const nome = item.nome.trim();
+      if (!nome) continue;
+      const key = nome.toLowerCase();
+      let resumo = map.get(key);
+      if (!resumo) {
+        resumo = {
+          nome,
+          unidade: item.unidade,
+          quantidadeTotal: 0,
+          valorTotal: 0,
+          vendasConcluidas: 0,
+          vendasEmProcessamento: 0,
+          clientes: 0,
+          ultimaVenda: null,
+          clientesSet: new Set(),
+        };
+        map.set(key, resumo);
+      }
+
+      if (!resumo.ultimaVenda || venda.data > resumo.ultimaVenda) {
+        resumo.ultimaVenda = venda.data;
+      }
+
+      if (concluida) {
+        resumo.quantidadeTotal += item.quantidade;
+        resumo.valorTotal += item.quantidade * item.valorUnit * ratio;
+        resumo.clientesSet.add(clienteKey);
+        if (!produtosNaVenda.has(key)) {
+          resumo.vendasConcluidas += 1;
+          produtosNaVenda.add(key);
+        }
+      } else if (!produtosNaVenda.has(key)) {
+        resumo.vendasEmProcessamento += 1;
+        produtosNaVenda.add(key);
+      }
+    }
+  }
+
+  return Array.from(map.values())
+    .map(({ clientesSet, ...r }) => ({
+      ...r,
+      clientes: clientesSet.size,
+      quantidadeTotal: arredondarQuantidade(r.quantidadeTotal),
+      valorTotal: Math.round(r.valorTotal * 100) / 100,
+    }))
+    .filter((r) => r.vendasConcluidas > 0 || r.vendasEmProcessamento > 0)
+    .sort(
+      (a, b) =>
+        b.quantidadeTotal - a.quantidadeTotal ||
+        b.valorTotal - a.valorTotal ||
+        a.nome.localeCompare(b.nome, 'pt-BR')
+    );
+}

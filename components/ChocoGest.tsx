@@ -101,6 +101,7 @@ import {
   listarVendasPendentes,
   produtosReservadosPendentes,
   rankingMelhoresClientes,
+  rankingProdutosMaisVendidos,
   resumoVendasPendentes,
   saldoLivreParaVenda,
   STATUS_VENDA_LABEL,
@@ -2023,6 +2024,7 @@ export default function ChocoGest() {
   );
 
   const rankingClientes = useMemo(() => rankingMelhoresClientes(data.vendas), [data.vendas]);
+  const rankingProdutos = useMemo(() => rankingProdutosMaisVendidos(data.vendas), [data.vendas]);
   const resumoFormVenda = useMemo(() => {
     const subtotal = subtotalItensVenda(novaVenda.itens);
     const descontoAplicado = valorDescontoAplicado(
@@ -2447,6 +2449,28 @@ export default function ChocoGest() {
                     </div>
                   ))}
                   {data.vendas.length === 0 && <p className="text-amber-400/60 text-sm">Nenhuma venda registrada.</p>}
+                </Card>
+                <Card>
+                  <h3 className="font-semibold text-amber-200 mb-3">Produtos mais vendidos</h3>
+                  {rankingProdutos.filter((p) => p.vendasConcluidas > 0).length > 0 ? (
+                    rankingProdutos
+                      .filter((p) => p.vendasConcluidas > 0)
+                      .slice(0, 5)
+                      .map((p, idx) => (
+                        <div key={p.nome} className="flex justify-between py-2 border-b border-amber-800/30 text-sm gap-2">
+                          <span>
+                            <span className="text-amber-400/70 mr-2">{idx + 1}.</span>
+                            {p.nome}
+                            <span className="block text-xs text-amber-400/70">
+                              {formatQuantidadeUnidade(p.quantidadeTotal, p.unidade)} · {p.vendasConcluidas} venda{p.vendasConcluidas > 1 ? 's' : ''}
+                            </span>
+                          </span>
+                          <span className="text-amber-300 shrink-0">{formatCurrency(p.valorTotal)}</span>
+                        </div>
+                      ))
+                  ) : (
+                    <p className="text-amber-400/60 text-sm">Nenhuma venda concluída ainda.</p>
+                  )}
                 </Card>
                 <Card>
                   <h3 className="font-semibold text-amber-200 mb-3">Últimas Produções</h3>
@@ -3464,6 +3488,76 @@ export default function ChocoGest() {
                 </div>
                 {vendasConcluidas.length === 0 && (
                   <p className="text-amber-400/60 py-4">Nenhuma venda concluída ainda.</p>
+                )}
+              </Card>
+
+              <Card className="mb-6">
+                <h4 className="text-amber-200 font-medium mb-1">Produtos mais vendidos</h4>
+                <p className="text-amber-400/70 text-xs mb-4">
+                  Ranking por quantidade vendida nas vendas concluídas (valor já considera desconto).
+                  Pedidos pendentes aparecem como contagem extra.
+                </p>
+                {rankingProdutos.length > 0 ? (
+                  <div className="table-scroll">
+                    <table className="w-full text-sm min-w-[760px]">
+                      <thead>
+                        <tr className="text-amber-300 border-b border-amber-700">
+                          <th className="text-left py-2">#</th>
+                          <th className="text-left py-2">Produto</th>
+                          <th className="text-left py-2">Última venda</th>
+                          <th className="text-right py-2">Vendas</th>
+                          <th className="text-right py-2">Clientes</th>
+                          <th className="text-right py-2">Qtd vendida</th>
+                          <th className="text-right py-2">Valor total</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rankingProdutos.map((p, idx) => (
+                          <tr key={p.nome} className="border-b border-amber-800/30">
+                            <td className="py-2 text-amber-400/80">{idx + 1}</td>
+                            <td className="py-2 font-medium">{p.nome}</td>
+                            <td className="py-2 text-amber-200">
+                              {p.ultimaVenda ? formatDate(p.ultimaVenda) : '—'}
+                            </td>
+                            <td className="py-2 text-right">
+                              {p.vendasConcluidas}
+                              {p.vendasEmProcessamento > 0 && (
+                                <span className="block text-xs text-amber-400/70">
+                                  +{p.vendasEmProcessamento} pendente{p.vendasEmProcessamento > 1 ? 's' : ''}
+                                </span>
+                              )}
+                            </td>
+                            <td className="py-2 text-right">{p.clientes}</td>
+                            <td className="py-2 text-right">
+                              {formatQuantidadeUnidade(p.quantidadeTotal, p.unidade)}
+                            </td>
+                            <td className="py-2 text-right font-semibold text-amber-100">
+                              {p.vendasConcluidas > 0 ? formatCurrency(p.valorTotal) : '—'}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot>
+                        <tr className="font-bold text-amber-100 border-t border-amber-700">
+                          <td colSpan={6} className="py-3 text-right">
+                            Total vendas concluídas
+                          </td>
+                          <td className="py-3 text-right">
+                            {formatCurrency(
+                              sumBy(
+                                rankingProdutos,
+                                (p) => p.valorTotal
+                              )
+                            )}
+                          </td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                ) : (
+                  <p className="text-amber-400/60 py-2">
+                    Nenhuma venda ainda para montar o ranking de produtos.
+                  </p>
                 )}
               </Card>
 
