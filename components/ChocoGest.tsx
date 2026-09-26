@@ -24,6 +24,7 @@ import type {
 } from '@/lib/types';
 import { EMPTY_DATA, TIPOS_ITEM, TIPOS_ITEM_LABEL } from '@/lib/types';
 import { loadAppData, saveAppData, exportBackup, parseBackupFile } from '@/lib/storage';
+import { DriveBackup } from '@/components/DriveBackup';
 import {
   arredondarDinheiro,
   calcularParcelasEmAberto,
@@ -2262,6 +2263,7 @@ export default function ChocoGest() {
               className="hidden"
               onChange={handleImportBackup}
             />
+            <DriveBackup data={data} onRestore={setData} />
             <Btn
               variant="secondary"
               onClick={() => gerarPdfDashboard(data)}

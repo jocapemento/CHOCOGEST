@@ -331,14 +331,21 @@ export function saveAppData(data: AppData): void {
   localStorage.setItem(STORAGE_KEYS.quitacoesCartao, JSON.stringify(normalized.quitacoesCartao));
 }
 
+export function serializeBackup(data: AppData): string {
+  return JSON.stringify(
+    {
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      app: 'ChocoGest',
+      data,
+    },
+    null,
+    2
+  );
+}
+
 export function exportBackup(data: AppData): void {
-  const payload = {
-    version: 1,
-    exportedAt: new Date().toISOString(),
-    app: 'ChocoGest',
-    data,
-  };
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const blob = new Blob([serializeBackup(data)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
