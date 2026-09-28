@@ -7,7 +7,7 @@
  * 2. Breakpoints Tailwind: sm 640 · md 768 · lg 1024 · xl 1280
  * 3. Toque: alvos ≥ 44px; inputs ≥ 16px (evita zoom iOS)
  * 4. Navegação: menu lateral ≥ lg; abas horizontais sticky no mobile
- * 5. Tabelas: scroll horizontal com indicação; sem overflow na página
+ * 5. Quadros: o conteúdo reflow no cartão (empilha quando não cabe); sem barra interna
  * 6. Formulários: 1 coluna no telefone; 2+ a partir de sm/lg
  * 7. Safe area: notch / home indicator (env(safe-area-inset-*))
  * 8. Legibilidade: contraste âmbar/chocolate; sem hover exclusivo
@@ -103,6 +103,132 @@ textarea {
   -webkit-overflow-scrolling: touch;
   overscroll-behavior-x: contain;
   max-width: 100%;
+}
+
+/*
+ * Quadro que precisa caber sem barra de rolagem.
+ * Largo: tabela fluida. Estreito: cada linha vira um bloco com rótulo (data-label).
+ */
+.quadro-fit {
+  container-type: inline-size;
+  container-name: quadro;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.quadro-fit-corpo {
+  max-width: 100%;
+  overflow-x: clip;
+}
+
+.quadro-fit table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.quadro-fit th,
+.quadro-fit td {
+  vertical-align: top;
+}
+
+@container quadro (min-width: 820px) {
+  .quadro-fit table {
+    table-layout: fixed;
+  }
+
+  .quadro-fit th,
+  .quadro-fit td {
+    padding-left: 0.35rem;
+    padding-right: 0.35rem;
+  }
+
+  .quadro-fit td {
+    overflow-wrap: break-word;
+  }
+
+  .quadro-fit th {
+    overflow-wrap: normal;
+  }
+}
+
+.quadro-fit td[data-label='Data'],
+.quadro-fit td[data-label='Última compra'],
+.quadro-fit td.tabular-nums {
+  white-space: nowrap;
+}
+
+@container quadro (max-width: 819.98px) {
+  .quadro-fit thead {
+    display: none;
+  }
+
+  .quadro-fit table,
+  .quadro-fit tbody,
+  .quadro-fit tfoot,
+  .quadro-fit tr {
+    display: block;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .quadro-fit tr {
+    padding: 0.65rem 0;
+    border-bottom: 1px solid rgb(146 64 14 / 0.3);
+  }
+
+  .quadro-fit td {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 0.75rem;
+    width: auto;
+    min-width: 0;
+    padding: 0.2rem 0;
+    border: 0;
+    text-align: right;
+    overflow-wrap: anywhere;
+  }
+
+  .quadro-fit td::before {
+    content: attr(data-label);
+    flex: 1 1 auto;
+    min-width: 0;
+    text-align: left;
+    font-weight: 400;
+    font-size: 0.75rem;
+    line-height: 1.25;
+    color: rgb(251 191 36 / 0.7);
+  }
+
+  .quadro-fit td.quadro-vazio,
+  .quadro-fit td:not([data-label]) {
+    display: none;
+  }
+
+  .quadro-fit td.quadro-titulo {
+    display: block;
+    text-align: left;
+    font-weight: 600;
+    color: rgb(255 251 235);
+    padding-bottom: 0.3rem;
+  }
+
+  .quadro-fit td.quadro-titulo::before {
+    content: none;
+  }
+
+  .quadro-fit td.quadro-texto,
+  .quadro-fit td.quadro-acoes {
+    display: block;
+    text-align: left;
+    padding-top: 0.35rem;
+  }
+
+  .quadro-fit td.quadro-texto::before,
+  .quadro-fit td.quadro-acoes::before {
+    display: block;
+    margin-bottom: 0.3rem;
+  }
 }
 
 .table-scroll table {

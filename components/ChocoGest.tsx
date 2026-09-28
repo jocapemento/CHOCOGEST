@@ -751,12 +751,12 @@ function CelulasEntregaPago({ venda }: { venda: Venda }) {
   const pago = pagoDaVenda(venda);
   return (
     <>
-      <td className="py-2">
+      <td className="py-2" data-label="Entrega">
         <Selo tone={entrega === 'a_entregar' ? 'wait' : entrega === 'entregue' ? 'ok' : 'neutral'}>
           {ENTREGA_VENDA_LABEL[entrega]}
         </Selo>
       </td>
-      <td className="py-2">
+      <td className="py-2" data-label="Pago">
         <Selo tone={pago === 'pago' ? 'ok' : 'wait'}>{PAGO_VENDA_LABEL[pago]}</Selo>
       </td>
     </>
@@ -2511,50 +2511,61 @@ export default function ChocoGest() {
                   Preços da aba Precificação. Produtos sem preço registrado aparecem apenas com custo.
                 </p>
                 {resumoPrecificacaoDashboard.itens.length > 0 ? (
-                  <div className="table-scroll">
-                    <table className="w-full text-sm min-w-[900px]">
+                  <div className="quadro-fit">
+                    <div className="quadro-fit-corpo">
+                    <table className="w-full text-sm">
+                      <colgroup>
+                        <col style={{ width: '18%' }} />
+                        <col style={{ width: '11%' }} />
+                        <col style={{ width: '12%' }} />
+                        <col style={{ width: '9%' }} />
+                        <col style={{ width: '12%' }} />
+                        <col style={{ width: '13%' }} />
+                        <col style={{ width: '13%' }} />
+                        <col style={{ width: '12%' }} />
+                      </colgroup>
                       <thead>
                         <tr className="text-amber-300 border-b border-amber-700">
-                          <th className="text-left py-2">Produto</th>
-                          <th className="text-right py-2">Qtd</th>
-                          <th className="text-right py-2">Custo un.</th>
-                          <th className="text-right py-2">Margem</th>
-                          <th className="text-right py-2">Preço sug.</th>
-                          <th className="text-right py-2">Total custo</th>
-                          <th className="text-right py-2">Total venda</th>
-                          <th className="text-right py-2">Lucro pot.</th>
+                          <th className="text-left py-2 pr-1">Produto</th>
+                          <th className="text-right py-2 px-0.5">Qtd</th>
+                          <th className="text-right py-2 px-0.5">Custo un.</th>
+                          <th className="text-right py-2 px-0.5">Margem</th>
+                          <th className="text-right py-2 px-0.5">Preço sug.</th>
+                          <th className="text-right py-2 px-0.5">Total custo</th>
+                          <th className="text-right py-2 px-0.5">Total venda</th>
+                          <th className="text-right py-2 pl-0.5">Lucro pot.</th>
                         </tr>
                       </thead>
                       <tbody>
                         {resumoPrecificacaoDashboard.itens.map((item) => (
                           <tr key={item.produto} className="border-b border-amber-800/30">
-                            <td className="py-2">
+                            <td className="py-2 pr-1 quadro-titulo" data-label="Produto">
                               {item.produto}
                               {item.dataPreco && (
-                                <span className="block text-xs text-amber-400/60">
+                                <span className="block text-xs font-normal text-amber-400/60">
                                   Preço em {formatDate(item.dataPreco)}
                                 </span>
                               )}
                             </td>
-                            <td className="py-2 text-right">
+                            <td className="py-2 px-0.5 text-right tabular-nums" data-label="Qtd">
                               {item.quantidade > 0 ? formatQuantidadeUnidade(item.quantidade, item.unidade) : '—'}
                             </td>
-                            <td className="py-2 text-right">
+                            <td className="py-2 px-0.5 text-right tabular-nums" data-label="Custo un.">
                               {item.custoUnitario > 0 ? formatCurrency(item.custoUnitario) : '—'}
                             </td>
-                            <td className="py-2 text-right">
+                            <td className="py-2 px-0.5 text-right tabular-nums" data-label="Margem">
                               {item.margemLucro !== null ? `${item.margemLucro}%` : '—'}
                             </td>
-                            <td className="py-2 text-right font-medium text-amber-100">
+                            <td className="py-2 px-0.5 text-right tabular-nums font-medium text-amber-100" data-label="Preço sug.">
                               {item.precoSugerido !== null ? formatCurrency(item.precoSugerido) : '—'}
                             </td>
-                            <td className="py-2 text-right">
+                            <td className="py-2 px-0.5 text-right tabular-nums" data-label="Total custo">
                               {item.valorCustoTotal > 0 ? formatCurrency(item.valorCustoTotal) : '—'}
                             </td>
-                            <td className="py-2 text-right">
+                            <td className="py-2 px-0.5 text-right tabular-nums" data-label="Total venda">
                               {item.valorVendaTotal !== null ? formatCurrency(item.valorVendaTotal) : '—'}
                             </td>
-                            <td className="py-2 text-right text-emerald-300/90">
+                            <td className="py-2 pl-0.5 text-right tabular-nums text-emerald-300/90" data-label="Lucro pot.">
                               {item.lucroPotencial !== null ? formatCurrency(item.lucroPotencial) : '—'}
                             </td>
                           </tr>
@@ -2562,23 +2573,24 @@ export default function ChocoGest() {
                       </tbody>
                       <tfoot>
                         <tr className="font-bold text-amber-100 border-t border-amber-700">
-                          <td className="py-3">Totalização</td>
-                          <td className="py-3 text-right text-xs font-normal text-amber-400/80">
+                          <td className="py-3 pr-1 quadro-titulo" data-label="Totalização">Totalização</td>
+                          <td className="py-3 px-0.5 text-right text-xs font-normal text-amber-400/80" data-label="Produtos">
                             {resumoPrecificacaoDashboard.totais.quantidadeProdutos} prod.
                           </td>
-                          <td colSpan={3} className="py-3" />
-                          <td className="py-3 text-right">
+                          <td colSpan={3} className="quadro-vazio py-3" />
+                          <td className="py-3 px-0.5 text-right tabular-nums" data-label="Total custo">
                             {formatCurrency(resumoPrecificacaoDashboard.totais.valorCustoTotal)}
                           </td>
-                          <td className="py-3 text-right">
+                          <td className="py-3 px-0.5 text-right tabular-nums" data-label="Total venda">
                             {formatCurrency(resumoPrecificacaoDashboard.totais.valorVendaTotal)}
                           </td>
-                          <td className="py-3 text-right text-emerald-300">
+                          <td className="py-3 pl-0.5 text-right tabular-nums text-emerald-300" data-label="Lucro pot.">
                             {formatCurrency(resumoPrecificacaoDashboard.totais.lucroPotencialTotal)}
                           </td>
                         </tr>
                       </tfoot>
                     </table>
+                    </div>
                   </div>
                 ) : (
                   <p className="text-amber-400/60 text-sm py-2">
@@ -3569,8 +3581,19 @@ export default function ChocoGest() {
                 )}
 
                 {vendasPendentes.length > 0 ? (
-                  <div className="table-scroll">
-                    <table className="w-full text-sm min-w-[1100px]">
+                  <div className="quadro-fit">
+                    <div className="quadro-fit-corpo">
+                    <table className="w-full text-sm">
+                      <colgroup>
+                        <col style={{ width: '12%' }} />
+                        <col style={{ width: '13%' }} />
+                        <col style={{ width: '12%' }} />
+                        <col style={{ width: '12%' }} />
+                        <col style={{ width: '11%' }} />
+                        <col style={{ width: '9%' }} />
+                        <col style={{ width: '13%' }} />
+                        <col style={{ width: '18%' }} />
+                      </colgroup>
                       <thead>
                         <tr className="text-amber-300 border-b border-amber-700">
                           <th className="text-left py-2">Data</th>
@@ -3580,7 +3603,7 @@ export default function ChocoGest() {
                           <th className="text-left py-2">Entrega</th>
                           <th className="text-left py-2">Pago</th>
                           <th className="text-right py-2">Total</th>
-                          <th className="text-right py-2 min-w-[220px]">Ações</th>
+                          <th className="text-right py-2">Ações</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -3591,9 +3614,9 @@ export default function ChocoGest() {
                               vendaEditandoId === v.id ? 'bg-amber-900/40' : ''
                             }`}
                           >
-                            <td className="py-2">{formatDate(v.data)}</td>
-                            <td className="py-2 font-medium">{v.cliente}</td>
-                            <td className="py-2 text-amber-200/90">
+                            <td className="py-2 quadro-titulo" data-label="Data">{formatDate(v.data)}</td>
+                            <td className="py-2 font-medium" data-label="Cliente">{v.cliente}</td>
+                            <td className="py-2 text-amber-200/90 quadro-texto" data-label="Itens reservados">
                               {v.itens.length > 0 ? (
                                 <div className="space-y-1">
                                   {v.itens.map((i) => (
@@ -3606,9 +3629,9 @@ export default function ChocoGest() {
                                 '—'
                               )}
                             </td>
-                            <td className="py-2">{v.formaPagamento}</td>
+                            <td className="py-2" data-label="Pagamento">{v.formaPagamento}</td>
                             <CelulasEntregaPago venda={v} />
-                            <td className="py-2 text-right font-semibold text-amber-100">
+                            <td className="py-2 text-right font-semibold text-amber-100 tabular-nums" data-label="Total">
                               {formatCurrency(v.total)}
                               {vendaTemDesconto(v) && (
                                 <div className="text-xs font-normal text-amber-400/70">
@@ -3616,25 +3639,25 @@ export default function ChocoGest() {
                                 </div>
                               )}
                             </td>
-                            <td className="py-2 text-right whitespace-nowrap">
+                            <td className="py-2 text-right quadro-acoes" data-label="Ações">
                               <div className="flex flex-wrap justify-end gap-1">
                                 {entregaAguardandoConfirmacao(v) && (
-                                  <Btn variant="primary" onClick={() => confirmarEntregaVenda(v.id)}>
+                                  <Btn variant="primary" className="!px-2.5 !py-1.5 text-xs whitespace-normal leading-tight" onClick={() => confirmarEntregaVenda(v.id)}>
                                     Confirmar entrega
                                   </Btn>
                                 )}
                                 {!isVendaPaga(v) && (
-                                  <Btn variant="primary" onClick={() => receberVenda(v.id)}>
+                                  <Btn variant="primary" className="!px-2.5 !py-1.5 text-xs whitespace-normal leading-tight" onClick={() => receberVenda(v.id)}>
                                     Receber
                                   </Btn>
                                 )}
-                                <Btn variant="primary" onClick={() => concluirVenda(v.id)}>
+                                <Btn variant="primary" className="!px-2.5 !py-1.5 text-xs whitespace-normal leading-tight" onClick={() => concluirVenda(v.id)}>
                                   Concluir
                                 </Btn>
-                                <Btn variant="secondary" onClick={() => editarVenda(v)}>
+                                <Btn variant="secondary" className="!px-2.5 !py-1.5 text-xs whitespace-normal leading-tight" onClick={() => editarVenda(v)}>
                                   Editar
                                 </Btn>
-                                <Btn variant="danger" onClick={() => removerVenda(v.id)}>
+                                <Btn variant="danger" className="!px-2.5 !py-1.5 text-xs whitespace-normal leading-tight" onClick={() => removerVenda(v.id)}>
                                   Excluir
                                 </Btn>
                               </div>
@@ -3644,16 +3667,17 @@ export default function ChocoGest() {
                       </tbody>
                       <tfoot>
                         <tr className="font-bold text-amber-100 border-t border-amber-700">
-                          <td colSpan={6} className="py-3 text-right">
+                          <td colSpan={6} className="py-3 text-right quadro-titulo" data-label="Total pendente">
                             Total pendente
                           </td>
-                          <td className="py-3 text-right">
+                          <td className="py-3 text-right tabular-nums" data-label="Total">
                             {formatCurrency(resumoPendentes.valorTotal)}
                           </td>
-                          <td />
+                          <td className="quadro-vazio" />
                         </tr>
                       </tfoot>
                     </table>
+                    </div>
                   </div>
                 ) : (
                   <p className="text-amber-400/60 py-2">
@@ -3668,8 +3692,20 @@ export default function ChocoGest() {
                 <p className="text-amber-400/70 text-xs mb-4">
                   Vendas já finalizadas (estoque baixado). O recebimento entra no financeiro quando está Pago.
                 </p>
-                <div className="table-scroll">
-                  <table className="w-full text-sm min-w-[1100px]">
+                <div className="quadro-fit">
+                  <div className="quadro-fit-corpo">
+                  <table className="w-full text-sm">
+                    <colgroup>
+                      <col style={{ width: '12%' }} />
+                      <col style={{ width: '12%' }} />
+                      <col style={{ width: '11%' }} />
+                      <col style={{ width: '9%' }} />
+                      <col style={{ width: '12%' }} />
+                      <col style={{ width: '9%' }} />
+                      <col style={{ width: '8%' }} />
+                      <col style={{ width: '14%' }} />
+                      <col style={{ width: '13%' }} />
+                    </colgroup>
                     <thead>
                       <tr className="text-amber-300 border-b border-amber-700">
                         <th className="text-left py-2">Data</th>
@@ -3680,7 +3716,7 @@ export default function ChocoGest() {
                         <th className="text-left py-2">Entrega</th>
                         <th className="text-left py-2">Pago</th>
                         <th className="text-right py-2">Total</th>
-                        <th className="text-right py-2 min-w-[200px]">Ações</th>
+                        <th className="text-right py-2">Ações</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -3689,9 +3725,9 @@ export default function ChocoGest() {
                           key={v.id}
                           className={`border-b border-amber-800/30 ${vendaEditandoId === v.id ? 'bg-amber-900/30' : ''}`}
                         >
-                          <td className="py-2">{formatDate(v.data)}</td>
-                          <td className="py-2">{v.cliente}</td>
-                          <td className="py-2 text-amber-200/90">
+                          <td className="py-2 quadro-titulo" data-label="Data">{formatDate(v.data)}</td>
+                          <td className="py-2" data-label="Cliente">{v.cliente}</td>
+                          <td className="py-2 text-amber-200/90 quadro-texto" data-label="Itens">
                             {v.itens.length > 0 ? (
                               <div className="space-y-1">
                                 {v.itens.map((i) => (
@@ -3704,14 +3740,14 @@ export default function ChocoGest() {
                               '—'
                             )}
                           </td>
-                          <td className="py-2">
+                          <td className="py-2" data-label="Status">
                             <span className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-emerald-900/50 text-emerald-200">
                               {STATUS_VENDA_LABEL.concluida}
                             </span>
                           </td>
-                          <td className="py-2">{v.formaPagamento}</td>
+                          <td className="py-2" data-label="Pagamento">{v.formaPagamento}</td>
                           <CelulasEntregaPago venda={v} />
-                          <td className="py-2 text-right">
+                          <td className="py-2 text-right tabular-nums" data-label="Total">
                             {formatCurrency(v.total)}
                             {vendaTemDesconto(v) && (
                               <div className="text-xs text-amber-400/70">
@@ -3719,22 +3755,22 @@ export default function ChocoGest() {
                               </div>
                             )}
                           </td>
-                          <td className="py-2 text-right whitespace-nowrap">
+                          <td className="py-2 text-right quadro-acoes" data-label="Ações">
                             <div className="flex flex-wrap justify-end gap-1">
                               {entregaAguardandoConfirmacao(v) && (
-                                <Btn variant="primary" onClick={() => confirmarEntregaVenda(v.id)}>
+                                <Btn variant="primary" className="!px-2.5 !py-1.5 text-xs whitespace-normal leading-tight" onClick={() => confirmarEntregaVenda(v.id)}>
                                   Confirmar entrega
                                 </Btn>
                               )}
                               {!isVendaPaga(v) && (
-                                <Btn variant="primary" onClick={() => receberVenda(v.id)}>
+                                <Btn variant="primary" className="!px-2.5 !py-1.5 text-xs whitespace-normal leading-tight" onClick={() => receberVenda(v.id)}>
                                   Receber
                                 </Btn>
                               )}
-                              <Btn variant="secondary" onClick={() => editarVenda(v)}>
+                              <Btn variant="secondary" className="!px-2.5 !py-1.5 text-xs whitespace-normal leading-tight" onClick={() => editarVenda(v)}>
                                 Editar
                               </Btn>
-                              <Btn variant="danger" onClick={() => removerVenda(v.id)}>
+                              <Btn variant="danger" className="!px-2.5 !py-1.5 text-xs whitespace-normal leading-tight" onClick={() => removerVenda(v.id)}>
                                 Excluir
                               </Btn>
                             </div>
@@ -3743,6 +3779,7 @@ export default function ChocoGest() {
                       ))}
                     </tbody>
                   </table>
+                  </div>
                 </div>
                 {vendasConcluidas.length === 0 && (
                   <p className="text-amber-400/60 py-4">Nenhuma venda concluída ainda.</p>
@@ -3826,8 +3863,17 @@ export default function ChocoGest() {
                   Pedidos pendentes aparecem como contagem extra. A última compra é a data mais recente do cliente.
                 </p>
                 {rankingClientes.length > 0 ? (
-                  <div className="table-scroll">
-                    <table className="w-full text-sm min-w-[920px]">
+                  <div className="quadro-fit">
+                    <div className="quadro-fit-corpo">
+                    <table className="w-full text-sm">
+                      <colgroup>
+                        <col style={{ width: '6%' }} />
+                        <col style={{ width: '24%' }} />
+                        <col style={{ width: '16%' }} />
+                        <col style={{ width: '14%' }} />
+                        <col style={{ width: '16%' }} />
+                        <col style={{ width: '24%' }} />
+                      </colgroup>
                       <thead>
                         <tr className="text-amber-300 border-b border-amber-700">
                           <th className="text-left py-2">#</th>
@@ -3835,48 +3881,53 @@ export default function ChocoGest() {
                           <th className="text-left py-2">Última compra</th>
                           <th className="text-right py-2">Vendas</th>
                           <th className="text-right py-2">Qtd total</th>
-                          <th className="text-left py-2">Produtos comprados</th>
                           <th className="text-right py-2">Valor total</th>
                         </tr>
                       </thead>
                       <tbody>
                         {rankingClientes.map((c, idx) => (
-                          <tr key={c.cliente} className="border-b border-amber-800/30">
-                            <td className="py-2 text-amber-400/80">{idx + 1}</td>
-                            <td className="py-2 font-medium">{c.cliente}</td>
-                            <td className="py-2 text-amber-200">
-                              {c.ultimaDataCompra ? formatDate(c.ultimaDataCompra) : '—'}
-                            </td>
-                            <td className="py-2 text-right">
-                              {c.vendasConcluidas}
-                              {c.vendasEmProcessamento > 0 && (
-                                <span className="block text-xs text-amber-400/70">
-                                  +{c.vendasEmProcessamento} pendente{c.vendasEmProcessamento > 1 ? 's' : ''}
-                                </span>
-                              )}
-                            </td>
-                            <td className="py-2 text-right">{c.quantidadeTotal}</td>
-                            <td className="py-2 text-amber-200/90">
-                              <div className="space-y-1">
-                                {c.produtos.map((p) => (
-                                  <div key={p.nome}>
-                                    {p.nome} — {formatQuantidadeUnidade(p.quantidade, p.unidade)} ({formatCurrency(p.valorTotal)})
-                                  </div>
-                                ))}
-                              </div>
-                            </td>
-                            <td className="py-2 text-right font-semibold text-amber-100">
-                              {formatCurrency(c.valorTotal)}
-                            </td>
-                          </tr>
+                          <React.Fragment key={c.cliente}>
+                            <tr className="border-b border-amber-800/30">
+                              <td className="py-2 text-amber-400/80" data-label="#">{idx + 1}</td>
+                              <td className="py-2 font-medium quadro-titulo" data-label="Cliente">
+                                {c.cliente}
+                              </td>
+                              <td className="py-2 text-amber-200" data-label="Última compra">
+                                {c.ultimaDataCompra ? formatDate(c.ultimaDataCompra) : '—'}
+                              </td>
+                              <td className="py-2 text-right" data-label="Vendas">
+                                {c.vendasConcluidas}
+                                {c.vendasEmProcessamento > 0 && (
+                                  <span className="block text-xs text-amber-400/70">
+                                    +{c.vendasEmProcessamento} pendente{c.vendasEmProcessamento > 1 ? 's' : ''}
+                                  </span>
+                                )}
+                              </td>
+                              <td className="py-2 text-right tabular-nums" data-label="Qtd total">{c.quantidadeTotal}</td>
+                              <td className="py-2 text-right font-semibold text-amber-100 tabular-nums" data-label="Valor total">
+                                {formatCurrency(c.valorTotal)}
+                              </td>
+                            </tr>
+                            <tr className="border-b border-amber-800/30">
+                              <td colSpan={6} className="py-2 text-amber-200/90 quadro-texto" data-label="Produtos comprados">
+                                <div className="space-y-1">
+                                  {c.produtos.map((p) => (
+                                    <div key={p.nome}>
+                                      {p.nome} — {formatQuantidadeUnidade(p.quantidade, p.unidade)} ({formatCurrency(p.valorTotal)})
+                                    </div>
+                                  ))}
+                                </div>
+                              </td>
+                            </tr>
+                          </React.Fragment>
                         ))}
                       </tbody>
                       <tfoot>
                         <tr className="font-bold text-amber-100 border-t border-amber-700">
-                          <td colSpan={6} className="py-3 text-right">
+                          <td colSpan={5} className="py-3 text-right quadro-titulo" data-label="Total">
                             Total vendas concluídas
                           </td>
-                          <td className="py-3 text-right">
+                          <td className="py-3 text-right tabular-nums" data-label="Valor">
                             {formatCurrency(
                               sumBy(
                                 data.vendas.filter((v) => isVendaConcluida(v)),
@@ -3887,6 +3938,7 @@ export default function ChocoGest() {
                         </tr>
                       </tfoot>
                     </table>
+                    </div>
                   </div>
                 ) : (
                   <p className="text-amber-400/60 py-2">
