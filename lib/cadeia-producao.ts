@@ -192,16 +192,20 @@ export function preencherProdutosComCoprodutos<T extends LinhaProdutoSaida>(
   nomesIngredientes: string[],
   unidade: string
 ): T[] {
-  const linhas = atuais.length > 0 ? atuais : [{ nome: '', quantidade: 0, unidade }];
+  const linhas: T[] =
+    atuais.length > 0 ? atuais : [{ nome: '', quantidade: 0, unidade } as T];
   const sugeridos = coprodutosSugeridosParaIngredientes(nomesIngredientes);
   if (sugeridos.length === 0) return linhas;
 
   const comNome = linhas.filter((p) => p.nome.trim());
   if (comNome.length > 0) return linhas;
 
-  return linhas.map((linha, idx) => ({
-    ...linha,
-    nome: sugeridos[idx] ?? linha.nome,
-    unidade: linha.unidade || unidade,
-  }));
+  return linhas.map(
+    (linha, idx) =>
+      ({
+        ...linha,
+        nome: sugeridos[idx] ?? linha.nome,
+        unidade: linha.unidade || unidade,
+      }) as T
+  );
 }
