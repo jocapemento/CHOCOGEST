@@ -71,10 +71,22 @@ export interface Venda {
 /** Produto de saída de um lote de produção (pode haver vários no mesmo lote). */
 export interface ProdutoGeradoProducao {
   nome: string;
+  /**
+   * Quantidade que entra no estoque.
+   * Se o peso foi fracionado, é o número de unidades (ex.: 66.667 un).
+   */
   quantidade: number;
+  /** Unidade do estoque. Fracionado: "un". */
   unidade: string;
   /** Custo rateado por massa a partir do custo total (matéria-prima + gás + embalagem). */
   custoAlocado?: number;
+  /** Massa total produzida, na mesma unidade da matéria-prima. Usada na perda e no rateio. */
+  massa?: number;
+  unidadeMassa?: string;
+  /** Peso de cada unidade fracionada (ex.: 15). */
+  pesoUnidade?: number;
+  /** Unidade desse peso: "g" ou "kg". */
+  unidadePeso?: string;
 }
 
 export interface Producao {

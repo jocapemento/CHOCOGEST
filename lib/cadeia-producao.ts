@@ -187,11 +187,11 @@ export interface LinhaProdutoSaida {
  * vazias já existentes — sem abrir linhas extras nem sobrescrever o que o usuário digitou.
  * Um produto gerado basta; o segundo só entra se o usuário adicionar a linha.
  */
-export function preencherProdutosComCoprodutos(
-  atuais: LinhaProdutoSaida[],
+export function preencherProdutosComCoprodutos<T extends LinhaProdutoSaida>(
+  atuais: T[],
   nomesIngredientes: string[],
   unidade: string
-): LinhaProdutoSaida[] {
+): T[] {
   const linhas = atuais.length > 0 ? atuais : [{ nome: '', quantidade: 0, unidade }];
   const sugeridos = coprodutosSugeridosParaIngredientes(nomesIngredientes);
   if (sugeridos.length === 0) return linhas;

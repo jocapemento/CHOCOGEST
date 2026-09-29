@@ -5,6 +5,7 @@ import {
   tipoEstoqueCadeia,
 } from '@/lib/cadeia-producao';
 import { arredondarQuantidade, formatQuantidadeUnidade } from '@/lib/format';
+import { massaRegistrada } from '@/lib/fracionar-massa';
 import type {
   Compra,
   EstoqueItem,
@@ -417,6 +418,7 @@ export function produtosDaProducao(
         quantidade: arredondarQuantidade(Number(p.quantidade) || 0),
         unidade: (p.unidade ?? 'kg').trim() || 'kg',
         custoAlocado: p.custoAlocado,
+        ...camposMassaFracionada(p),
       }))
       .filter((p) => p.nome.length > 0);
   }
@@ -442,17 +444,34 @@ export function rotuloProdutosProducao(
   return produtos.map((p) => p.nome).join(' + ');
 }
 
+function camposMassaFracionada(p: Partial<ProdutoGeradoProducao>): Pick<
+  ProdutoGeradoProducao,
+  'massa' | 'unidadeMassa' | 'pesoUnidade' | 'unidadePeso'
+> {
+  const massa = Number(p.massa);
+  const pesoUnidade = Number(p.pesoUnidade);
+  const unidadeMassa = (p.unidadeMassa ?? '').trim();
+  if (!(massa > 0) || !(pesoUnidade > 0) || !unidadeMassa) return {};
+  return {
+    massa: arredondarQuantidade(massa),
+    unidadeMassa,
+    pesoUnidade: arredondarQuantidade(pesoUnidade),
+    unidadePeso: (p.unidadePeso ?? 'g').trim() || 'g',
+  };
+}
+
 export function totalSaidaProdutos(
   produtos: ProdutoGeradoProducao[]
 ): { total: number; unidade: string } | null {
   if (produtos.length === 0) return null;
 
-  const unidade = produtos[0].unidade || 'kg';
-  for (const p of produtos) {
-    if ((p.unidade || 'kg').toLowerCase() !== unidade.toLowerCase()) return null;
+  const partes = produtos.map((p) => massaRegistrada(p));
+  const unidade = partes[0].unidade || 'kg';
+  for (const parte of partes) {
+    if ((parte.unidade || 'kg').toLowerCase() !== unidade.toLowerCase()) return null;
   }
 
-  const total = arredondarQuantidade(produtos.reduce((acc, p) => acc + p.quantidade, 0));
+  const total = arredondarQuantidade(partes.reduce((acc, parte) => acc + parte.quantidade, 0));
   return { total, unidade };
 }
 
@@ -470,7 +489,7 @@ export function alocarCustoEntreProdutos(
 
   return produtos.map((p) => ({
     ...p,
-    custoAlocado: arredondarQuantidade((custoTotal * p.quantidade) / totalQtd),
+    custoAlocado: arredondarQuantidade((custoTotal * massaRegistrada(p).quantidade) / totalQtd),
   }));
 }
 
@@ -723,7 +742,7 @@ export function custoUltimaProducaoDoProduto(
           : (() => {
               const saida = totalSaidaProdutos(produtosDaProducao(p));
               if (!saida || saida.total <= 0) return 0;
-              return (p.custoEstimado * prod.quantidade) / saida.total;
+              return (p.custoEstimado * massaRegistrada(prod).quantidade) / saida.total;
             })();
       return {
         data: p.data,

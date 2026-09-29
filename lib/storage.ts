@@ -158,6 +158,10 @@ function normalizeProdutosGerados(
             p.custoAlocado !== undefined && p.custoAlocado !== null
               ? asNumber(p.custoAlocado)
               : undefined,
+          massa: p.massa,
+          unidadeMassa: p.unidadeMassa,
+          pesoUnidade: p.pesoUnidade,
+          unidadePeso: p.unidadePeso,
         }))
       : undefined,
   });

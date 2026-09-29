@@ -141,6 +141,12 @@ import {
   todayISO,
 } from '@/lib/format';
 import {
+  UNIDADE_FRACIONADA,
+  descreverQuantidadeFracionada,
+  produtoFoiFracionado,
+  unidadesFracionadas,
+} from '@/lib/fracionar-massa';
+import {
   gerarPdfCompras,
   gerarPdfDashboard,
   gerarPdfEstoque,
@@ -635,12 +641,30 @@ const ITEM_ESTOQUE_FORM_INICIAL = {
   data: todayISO(),
 };
 
-const PRODUTO_SAIDA_INICIAL: ProdutoGeradoProducao = { nome: '', quantidade: 0, unidade: 'kg' };
+type ProdutoSaidaForm = {
+  nome: string;
+  /** Peso total, na mesma unidade da matéria-prima. */
+  quantidade: number;
+  unidade: string;
+  fracionar: boolean;
+  /** Peso de cada unidade, ex.: 15. */
+  pesoUnidade: number;
+  unidadePeso: string;
+};
+
+const PRODUTO_SAIDA_INICIAL: ProdutoSaidaForm = {
+  nome: '',
+  quantidade: 0,
+  unidade: 'kg',
+  fracionar: false,
+  pesoUnidade: 0,
+  unidadePeso: 'g',
+};
 
 const PRODUCAO_FORM_INICIAL = {
   data: todayISO(),
   lote: '',
-  produtos: [{ ...PRODUTO_SAIDA_INICIAL }] as ProdutoGeradoProducao[],
+  produtos: [{ ...PRODUTO_SAIDA_INICIAL }] as ProdutoSaidaForm[],
   ingredientes: [] as Array<{
     nome: string;
     quantidade: number;
@@ -650,14 +674,39 @@ const PRODUCAO_FORM_INICIAL = {
   }>,
 };
 
-function unidadeSugeridaProduto(producoes: Producao[], nome: string): string | undefined {
+/** Último lote desse nome: o formulário continua em massa, mesmo se o estoque ficou em unidades. */
+function sugestaoProdutoSaida(
+  producoes: Producao[],
+  nome: string
+): Partial<ProdutoSaidaForm> | undefined {
   const key = nome.trim().toLowerCase();
   if (!key) return undefined;
   for (const p of [...producoes].sort((a, b) => b.data.localeCompare(a.data) || b.id - a.id)) {
     const prod = produtosDaProducao(p).find((x) => x.nome.toLowerCase() === key);
-    if (prod?.unidade) return prod.unidade;
+    if (!prod) continue;
+    if (produtoFoiFracionado(prod)) {
+      return {
+        unidade: prod.unidadeMassa || 'kg',
+        fracionar: true,
+        pesoUnidade: prod.pesoUnidade,
+        unidadePeso: prod.unidadePeso || 'g',
+      };
+    }
+    if (prod.unidade) {
+      return { unidade: prod.unidade, fracionar: false, pesoUnidade: 0, unidadePeso: 'g' };
+    }
   }
   return undefined;
+}
+
+/** A perda fica na unidade da matéria-prima. Depois do fracionamento, `p.unidade` é "un". */
+function unidadePerdaDaProducao(producao: Producao): string {
+  return (
+    totalEntradaIngredientes(producao.ingredientes)?.unidade ||
+    produtosDaProducao(producao).find((p) => (p.unidadeMassa ?? '').trim())?.unidadeMassa ||
+    producao.unidade ||
+    'kg'
+  );
 }
 
 const MOV_CAIXA_FORM_INICIAL = {
@@ -1554,7 +1603,7 @@ export default function ChocoGest() {
     }));
   };
 
-  const atualizarProdutoSaida = (idx: number, patch: Partial<ProdutoGeradoProducao>) => {
+  const atualizarProdutoSaida = (idx: number, patch: Partial<ProdutoSaidaForm>) => {
     setNovaProducao((p) => ({
       ...p,
       produtos: p.produtos.map((prod, i) => (i === idx ? { ...prod, ...patch } : prod)),
@@ -1599,7 +1648,28 @@ export default function ChocoGest() {
     setNovaProducao({
       data: normalizeDateISO(producao.data),
       lote: producao.lote,
-      produtos: produtos.length > 0 ? produtos.map((p) => ({ ...p })) : [{ ...PRODUTO_SAIDA_INICIAL }],
+      produtos:
+        produtos.length > 0
+          ? produtos.map((p) =>
+              p.massa && p.massa > 0 && p.pesoUnidade && p.pesoUnidade > 0
+                ? {
+                    nome: p.nome,
+                    quantidade: p.massa,
+                    unidade: p.unidadeMassa || 'kg',
+                    fracionar: true,
+                    pesoUnidade: p.pesoUnidade,
+                    unidadePeso: p.unidadePeso || 'g',
+                  }
+                : {
+                    nome: p.nome,
+                    quantidade: p.quantidade,
+                    unidade: p.unidade || 'kg',
+                    fracionar: false,
+                    pesoUnidade: 0,
+                    unidadePeso: 'g',
+                  }
+            )
+          : [{ ...PRODUTO_SAIDA_INICIAL }],
       ingredientes: producao.ingredientes.map((i) => {
         const tipo = resolverTipoIngredienteProducao(i, data.producoes);
         const saldo = saldoIngredienteProducao(data.estoque, i.nome, data.producoes, tipo);
@@ -1663,23 +1733,26 @@ export default function ChocoGest() {
       return alert('Preencha os ingredientes.');
     }
 
-    const produtosPreenchidos = novaProducao.produtos
+    const produtosMassa = novaProducao.produtos
       .map((p) => ({
         nome: p.nome.trim(),
         quantidade: arredondarQuantidade(Number(p.quantidade) || 0),
         unidade: (p.unidade || 'kg').trim() || 'kg',
+        fracionar: !!p.fracionar,
+        pesoUnidade: arredondarQuantidade(Number(p.pesoUnidade) || 0),
+        unidadePeso: (p.unidadePeso || 'g').trim() || 'g',
       }))
       .filter((p) => p.nome.length > 0);
 
-    if (produtosPreenchidos.length === 0) {
+    if (produtosMassa.length === 0) {
       return alert('Informe pelo menos um produto gerado.');
     }
-    if (produtosPreenchidos.some((p) => p.quantidade <= 0)) {
+    if (produtosMassa.some((p) => p.quantidade <= 0)) {
       return alert('Informe a quantidade de cada produto gerado.');
     }
 
     const nomesSaida = new Set<string>();
-    for (const p of produtosPreenchidos) {
+    for (const p of produtosMassa) {
       const key = p.nome.toLowerCase();
       if (nomesSaida.has(key)) {
         return alert(`O produto "${p.nome}" está duplicado neste lote.`);
@@ -1691,7 +1764,7 @@ export default function ChocoGest() {
 
     const perdaCalculada = calcularPerdaProducao({
       ingredientes: novaProducao.ingredientes,
-      produtos: produtosPreenchidos,
+      produtos: produtosMassa,
     });
     if (!perdaCalculada) {
       if (ingredientesMassaProducao(novaProducao.ingredientes).length === 0) {
@@ -1708,12 +1781,38 @@ export default function ChocoGest() {
         `A quantidade produzida (${perdaCalculada.saida} ${perdaCalculada.unidade}) não pode ser maior que a matéria-prima lançada (${perdaCalculada.entrada} ${perdaCalculada.unidade}).`
       );
     }
-    for (const p of produtosPreenchidos) {
+    for (const p of produtosMassa) {
       if (p.unidade.toLowerCase() !== perdaCalculada.unidade.toLowerCase()) {
         return alert(
           `A unidade de "${p.nome}" ("${p.unidade}") deve ser a mesma da matéria-prima ("${perdaCalculada.unidade}").`
         );
       }
+    }
+
+    const produtosPreenchidos: ProdutoGeradoProducao[] = [];
+    for (const p of produtosMassa) {
+      if (!p.fracionar) {
+        produtosPreenchidos.push({ nome: p.nome, quantidade: p.quantidade, unidade: p.unidade });
+        continue;
+      }
+      if (!(p.pesoUnidade > 0)) {
+        return alert(`Informe o peso de cada unidade de "${p.nome}" (ex.: 15 g).`);
+      }
+      const unidades = unidadesFracionadas(p.quantidade, p.unidade, p.pesoUnidade, p.unidadePeso);
+      if (unidades == null) {
+        return alert(
+          `Não dá para fracionar "${p.nome}" a partir de "${p.unidade}" em pesos de "${p.unidadePeso}". Use kg ou g.`
+        );
+      }
+      produtosPreenchidos.push({
+        nome: p.nome,
+        quantidade: unidades,
+        unidade: UNIDADE_FRACIONADA,
+        massa: p.quantidade,
+        unidadeMassa: p.unidade,
+        pesoUnidade: p.pesoUnidade,
+        unidadePeso: p.unidadePeso,
+      });
     }
 
     const custoEstimado = sumBy(
@@ -4106,60 +4205,130 @@ export default function ChocoGest() {
                   </p>
                 )}
                 <div className="space-y-3 mb-4">
-                  {novaProducao.produtos.map((prod, idx) => (
-                    <div key={idx} className="grid grid-cols-1 sm:grid-cols-7 gap-3 items-end">
-                      <div className="sm:col-span-3">
-                        <Field label={idx === 0 ? 'Produto' : `Produto ${idx + 1}`}>
-                          <input
-                            list="catalogo-produtos-producao"
-                            className={inputCls}
-                            value={prod.nome}
-                            onChange={(e) => {
-                              const nome = e.target.value;
-                              const unidade = unidadeSugeridaProduto(data.producoes, nome);
-                              atualizarProdutoSaida(idx, {
-                                nome,
-                                unidade: unidade ?? prod.unidade,
-                              });
-                            }}
-                            placeholder="Selecione ou digite um produto"
-                          />
-                        </Field>
+                  {novaProducao.produtos.map((prod, idx) => {
+                    const unidadesPreview = prod.fracionar
+                      ? unidadesFracionadas(
+                          prod.quantidade,
+                          prod.unidade || 'kg',
+                          prod.pesoUnidade,
+                          prod.unidadePeso || 'g'
+                        )
+                      : null;
+                    return (
+                    <div key={idx} className="rounded-xl border border-amber-800/40 p-3 space-y-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-7 gap-3 items-end">
+                        <div className="sm:col-span-3">
+                          <Field label={idx === 0 ? 'Produto' : `Produto ${idx + 1}`}>
+                            <input
+                              list="catalogo-produtos-producao"
+                              className={inputCls}
+                              value={prod.nome}
+                              onChange={(e) => {
+                                const nome = e.target.value;
+                                const sugestao = sugestaoProdutoSaida(data.producoes, nome);
+                                atualizarProdutoSaida(idx, { nome, ...sugestao });
+                              }}
+                              placeholder="Selecione ou digite um produto"
+                            />
+                          </Field>
+                        </div>
+                        <div className="sm:col-span-2">
+                          <Field label="Quantidade">
+                            <input
+                              type="number"
+                              step="0.001"
+                              min={0}
+                              className={inputCls}
+                              value={prod.quantidade || ''}
+                              onChange={(e) =>
+                                atualizarProdutoSaida(idx, { quantidade: +e.target.value })
+                              }
+                            />
+                          </Field>
+                        </div>
+                        <div className="sm:col-span-1">
+                          <Field label="Un.">
+                            <input
+                              className={inputCls}
+                              value={prod.unidade}
+                              onChange={(e) => atualizarProdutoSaida(idx, { unidade: e.target.value })}
+                            />
+                          </Field>
+                        </div>
+                        <div className="sm:col-span-1 pb-1">
+                          <Btn
+                            variant="danger"
+                            className="w-full"
+                            onClick={() => removerProdutoSaida(idx)}
+                          >
+                            ✕
+                          </Btn>
+                        </div>
                       </div>
-                      <div className="sm:col-span-2">
-                        <Field label="Quantidade">
-                          <input
-                            type="number"
-                            step="0.001"
-                            min={0}
-                            className={inputCls}
-                            value={prod.quantidade || ''}
-                            onChange={(e) =>
-                              atualizarProdutoSaida(idx, { quantidade: +e.target.value })
-                            }
-                          />
-                        </Field>
-                      </div>
-                      <div className="sm:col-span-1">
-                        <Field label="Un.">
-                          <input
-                            className={inputCls}
-                            value={prod.unidade}
-                            onChange={(e) => atualizarProdutoSaida(idx, { unidade: e.target.value })}
-                          />
-                        </Field>
-                      </div>
-                      <div className="sm:col-span-1 pb-1">
-                        <Btn
-                          variant="danger"
-                          className="w-full"
-                          onClick={() => removerProdutoSaida(idx)}
-                        >
-                          ✕
-                        </Btn>
-                      </div>
+                      <label className="flex items-start gap-2 text-sm text-amber-200 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          className="mt-1 h-4 w-4 shrink-0 accent-amber-500"
+                          checked={prod.fracionar}
+                          onChange={(e) =>
+                            atualizarProdutoSaida(idx, { fracionar: e.target.checked })
+                          }
+                        />
+                        <span>
+                          Fracionar em unidades
+                          <span className="block text-xs text-amber-400/80 font-normal">
+                            Ex.: 1 kg de chocolate 70% em barras de 15 g. O estoque entra em unidades e a perda continua no peso.
+                          </span>
+                        </span>
+                      </label>
+                      {prod.fracionar && (
+                        <div className="space-y-2">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <Field label="Peso de cada unidade">
+                              <input
+                                type="number"
+                                step="0.001"
+                                min={0}
+                                className={inputCls}
+                                value={prod.pesoUnidade || ''}
+                                placeholder="15"
+                                onChange={(e) =>
+                                  atualizarProdutoSaida(idx, { pesoUnidade: +e.target.value })
+                                }
+                              />
+                            </Field>
+                            <Field label="Un. do peso">
+                              <select
+                                className={inputCls}
+                                value={prod.unidadePeso || 'g'}
+                                onChange={(e) =>
+                                  atualizarProdutoSaida(idx, { unidadePeso: e.target.value })
+                                }
+                              >
+                                <option value="g">g</option>
+                                <option value="kg">kg</option>
+                              </select>
+                            </Field>
+                          </div>
+                          {unidadesPreview != null ? (
+                            <p className="text-sm text-amber-300">
+                              {formatQuantidadeUnidade(prod.quantidade, prod.unidade || 'kg')} ={' '}
+                              {formatQuantidade(unidadesPreview)} un de {formatQuantidade(prod.pesoUnidade)}{' '}
+                              {prod.unidadePeso || 'g'}.
+                            </p>
+                          ) : (
+                            prod.pesoUnidade > 0 &&
+                            prod.quantidade > 0 && (
+                              <p className="text-xs text-amber-400">
+                                Use kg ou g no peso do produto e no peso de cada unidade.
+                              </p>
+                            )
+                          )}
+                        </div>
+                      )}
                     </div>
-                  ))}
+                    );
+                  })}
                   <datalist id="catalogo-produtos-producao">
                     {catalogoProdutosProducao.map((nome) => (
                       <option key={nome} value={nome} />
@@ -4220,7 +4389,7 @@ export default function ChocoGest() {
                           <td className="py-2">{rotuloProdutosProducao(p)}</td>
                           <td className="py-2 text-right">
                             {produtosDaProducao(p)
-                              .map((prod) => formatQuantidadeUnidade(prod.quantidade, prod.unidade))
+                              .map((prod) => descreverQuantidadeFracionada(prod))
                               .join(' + ')}
                           </td>
                           <td className="py-2 text-right text-amber-300/80">
@@ -4228,7 +4397,7 @@ export default function ChocoGest() {
                               <>
                                 {p.percentualPerda ?? 0}%
                                 <span className="block text-xs text-amber-400/60">
-                                  −{formatQuantidadeUnidade(p.quantidadePerdida, p.unidade)}
+                                  −{formatQuantidadeUnidade(p.quantidadePerdida, unidadePerdaDaProducao(p))}
                                 </span>
                               </>
                             ) : (
