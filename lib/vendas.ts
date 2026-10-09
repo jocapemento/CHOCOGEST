@@ -39,6 +39,48 @@ export function isVendaConcluida(venda: Pick<Venda, 'status'>): boolean {
   return (venda.status ?? 'concluida') === 'concluida';
 }
 
+/** Ainda falta confirmar entrega ou recebimento. */
+export function vendaTemPendenciaConfirmacao(
+  venda: Pick<Venda, 'entrega' | 'pago' | 'status'>
+): boolean {
+  return entregaAguardandoConfirmacao(venda) || !isVendaPaga(venda);
+}
+
+export function motivoImpedeConclusao(
+  venda: Pick<Venda, 'entrega' | 'pago' | 'status'>
+): string | null {
+  const faltaEntrega = entregaAguardandoConfirmacao(venda);
+  const faltaPagamento = !isVendaPaga(venda);
+  if (faltaEntrega && faltaPagamento) {
+    return 'Ainda falta confirmar a entrega e o recebimento do pagamento.';
+  }
+  if (faltaEntrega) {
+    return 'Ainda falta confirmar a entrega.';
+  }
+  if (faltaPagamento) {
+    return 'Ainda falta registrar o recebimento do pagamento.';
+  }
+  return null;
+}
+
+/** Status concluída só é permitido sem pendência de entrega ou pagamento. */
+export function statusPermitidoVenda(
+  venda: Pick<Venda, 'entrega' | 'pago' | 'status'>,
+  statusDesejado: StatusVenda,
+  jaEraConcluida = false
+): StatusVenda {
+  if (statusDesejado !== 'concluida') return 'em_processamento';
+  if (!vendaTemPendenciaConfirmacao({ ...venda, status: statusDesejado })) return 'concluida';
+  return jaEraConcluida ? 'concluida' : 'em_processamento';
+}
+
+/** Concluída de verdade: status gravado e sem pendência de entrega/pagamento. */
+export function isVendaFinalizada(
+  venda: Pick<Venda, 'status' | 'entrega' | 'pago'>
+): boolean {
+  return isVendaConcluida(venda) && !vendaTemPendenciaConfirmacao(venda);
+}
+
 /** Venda antiga sem o campo segue o status: pendente ainda vai entregar; concluída já saiu. */
 export function normalizarEntregaVenda(
   entrega: unknown,
@@ -85,7 +127,14 @@ export function vendaLancaRecebimento(venda: Pick<Venda, 'pago' | 'status'>): bo
   return isVendaPaga(venda);
 }
 
-export function isVendaPendente(venda: Venda): boolean {
+export function isVendaPendente(
+  venda: Pick<Venda, 'status' | 'entrega' | 'pago'>
+): boolean {
+  return !isVendaFinalizada(venda);
+}
+
+/** Reserva saldo livre só enquanto o status ainda não baixou o estoque. */
+export function vendaReservaEstoque(venda: Pick<Venda, 'status'>): boolean {
   return !isVendaConcluida(venda);
 }
 
@@ -171,10 +220,18 @@ export function formatarDescontoVenda(
   return formatCurrency(aplicado);
 }
 
-/** Vendas com status pendente (em processamento), mais recentes primeiro. */
+/** Vendas ainda não finalizadas (status, entrega ou pagamento pendente), mais recentes primeiro. */
 export function listarVendasPendentes(vendas: Venda[]): Venda[] {
   return vendas
     .filter(isVendaPendente)
+    .slice()
+    .sort((a, b) => b.data.localeCompare(a.data) || b.id - a.id);
+}
+
+/** Vendas concluídas de verdade (entrega e pagamento confirmados). */
+export function listarVendasConcluidas(vendas: Venda[]): Venda[] {
+  return vendas
+    .filter(isVendaFinalizada)
     .slice()
     .sort((a, b) => b.data.localeCompare(a.data) || b.id - a.id);
 }
@@ -188,12 +245,13 @@ export interface ResumoVendasPendentes {
 
 export function resumoVendasPendentes(vendas: Venda[]): ResumoVendasPendentes {
   const pendentes = listarVendasPendentes(vendas);
+  const reservadas = vendas.filter(vendaReservaEstoque);
   const clientes = new Set(pendentes.map((v) => v.cliente.trim().toLowerCase()).filter(Boolean));
   return {
     quantidade: pendentes.length,
     valorTotal: Math.round(sumBy(pendentes, (v) => v.total) * 100) / 100,
     clientes: clientes.size,
-    itensReservados: Math.round(sumBy(pendentes, (v) => totalQuantidadeVenda(v.itens)) * 1000) / 1000,
+    itensReservados: Math.round(sumBy(reservadas, (v) => totalQuantidadeVenda(v.itens)) * 1000) / 1000,
   };
 }
 
@@ -242,7 +300,7 @@ export function quantidadeReservadaProduto(
 
   let total = 0;
   for (const venda of vendas) {
-    if (!isVendaPendente(venda)) continue;
+    if (!vendaReservaEstoque(venda)) continue;
     if (ignorarVendaId != null && venda.id === ignorarVendaId) continue;
     for (const item of venda.itens) {
       if (item.nome.toLowerCase() === key) {
@@ -269,7 +327,8 @@ export function saldoLivreParaVenda(
 export function produtosReservadosPendentes(vendas: Venda[]): ProdutoReservadoPendente[] {
   const map = new Map<string, ProdutoReservadoPendente>();
 
-  for (const venda of listarVendasPendentes(vendas)) {
+  for (const venda of vendas) {
+    if (!vendaReservaEstoque(venda)) continue;
     const subtotal = subtotalItensVenda(venda.itens);
     const ratio = subtotal > 0 ? venda.total / subtotal : 1;
     for (const item of venda.itens) {
@@ -378,14 +437,14 @@ export function rankingMelhoresClientes(vendas: Venda[]): ResumoClienteVenda[] {
   for (const venda of vendas) {
     const cliente = venda.cliente.trim() || 'Sem nome';
     const key = cliente.toLowerCase();
-    const concluida = isVendaConcluida(venda);
+    const concluida = isVendaFinalizada(venda);
 
     let resumo = map.get(key);
     if (!resumo) {
       resumo = {
         cliente,
         vendasConcluidas: 0,
-        vendasEmProcessamento: 0, // pedidos pendentes
+        vendasEmProcessamento: 0, // pedidos ainda não finalizados
         quantidadeTotal: 0,
         valorTotal: 0,
         produtos: [],
@@ -456,7 +515,7 @@ export function rankingProdutosMaisVendidos(vendas: Venda[]): ResumoProdutoVendi
   const map = new Map<string, Acc>();
 
   for (const venda of vendas) {
-    const concluida = isVendaConcluida(venda);
+    const concluida = isVendaFinalizada(venda);
     const clienteKey = (venda.cliente.trim() || 'Sem nome').toLowerCase();
     const subtotal = subtotalItensVenda(venda.itens);
     const ratio = subtotal > 0 ? venda.total / subtotal : 1;

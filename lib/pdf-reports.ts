@@ -18,7 +18,8 @@ import {
   entregaDaVenda,
   formatarDescontoVenda,
   formatarItensVenda,
-  isVendaConcluida,
+  isVendaFinalizada,
+  listarVendasConcluidas,
   listarVendasPendentes,
   PAGO_VENDA_LABEL,
   pagoDaVenda,
@@ -172,7 +173,7 @@ export function gerarPdfVendas(data: AppData) {
   const pendentes = listarVendasPendentes(data.vendas);
   const resumoPend = resumoVendasPendentes(data.vendas);
   const reservas = produtosReservadosPendentes(data.vendas);
-  const concluidas = data.vendas.filter((v) => isVendaConcluida(v));
+  const concluidas = listarVendasConcluidas(data.vendas);
 
   let y = 52;
 
@@ -183,7 +184,7 @@ export function gerarPdfVendas(data: AppData) {
 
   autoTable(doc, {
     startY: y,
-    head: [['Data', 'Cliente', 'Itens reservados', 'Pagamento', 'Entrega', 'Pago', 'Desconto', 'Total']],
+    head: [['Data', 'Cliente', 'Itens', 'Pagamento', 'Entrega', 'Pago', 'Desconto', 'Total']],
     body:
       pendentes.length > 0
         ? pendentes.map((v) => [
@@ -395,7 +396,7 @@ export function gerarPdfDashboard(data: AppData) {
   const valorEmbalagem = sumBy(saldoEmbalagem, (i) => i.quantidade * i.valorUnit);
   const valorEstoque = valorMateriaPrima + valorProdutosGerados + valorEnergia + valorEmbalagem;
   const totalCompras = sumBy(data.compras, (c) => c.total);
-  const totalVendas = sumBy(data.vendas.filter((v) => isVendaConcluida(v)), (v) => v.total);
+  const totalVendas = sumBy(data.vendas.filter((v) => isVendaFinalizada(v)), (v) => v.total);
   const saldoCaixa =
     sumBy(data.movimentosCaixa.filter((m) => m.tipo === 'entrada'), (m) => m.valor) -
     sumBy(data.movimentosCaixa.filter((m) => m.tipo === 'saida'), (m) => m.valor);

@@ -105,8 +105,11 @@ import {
   entregaDaVenda,
   formatarDescontoVenda,
   isVendaConcluida,
+  isVendaFinalizada,
   isVendaPaga,
+  listarVendasConcluidas,
   listarVendasPendentes,
+  motivoImpedeConclusao,
   PAGO_VENDA_LABEL,
   PAGO_VENDA_OPCOES,
   pagoDaVenda,
@@ -118,12 +121,14 @@ import {
   resumoVendasPendentes,
   saldoLivreParaVenda,
   STATUS_VENDA_LABEL,
+  statusPermitidoVenda,
   subtotalItensVenda,
   totalLiquidoVenda,
   validarEstoqueVenda,
   validarReservaVendaPendente,
   valorDescontoAplicado,
   vendaTemDesconto,
+  vendaTemPendenciaConfirmacao,
 } from '@/lib/vendas';
 import {
   arredondarQuantidade,
@@ -447,15 +452,13 @@ function recebimentoJaLancado(prev: AppData, vendaId: number): boolean {
 }
 
 function mensagemVendaRegistrada(venda: Venda): string {
-  const concluida = isVendaConcluida(venda);
+  if (isVendaFinalizada(venda)) return 'Venda concluída e registrada!';
   const paga = isVendaPaga(venda);
-  if (concluida && paga) return 'Venda concluída e registrada!';
-  if (!concluida && !paga) {
-    return 'Venda pendente registrada (estoque reservado, sem baixa financeira).';
-  }
-  const estoqueMsg = concluida ? 'estoque baixado' : 'estoque reservado';
-  const dinheiroMsg = paga ? 'recebimento lançado' : 'a receber, sem lançamento no financeiro';
-  return `Venda registrada (${estoqueMsg}; ${dinheiroMsg}).`;
+  const detalhe = paga
+    ? 'estoque reservado; recebimento lançado'
+    : 'estoque reservado, sem baixa financeira';
+  const motivo = motivoImpedeConclusao(venda);
+  return `Venda pendente registrada (${detalhe}).${motivo ? ` ${motivo}` : ''} A venda permanece na Relação de vendas pendentes.`;
 }
 
 /** Inclui o recebimento se está Pago e ainda não há lançamento. Não mexe no estoque. */
@@ -478,6 +481,31 @@ function reverterEfeitosVenda(prev: AppData, venda: Venda): AppData {
     ? { ...prev, estoque: atualizarEstoqueCompra(prev.estoque, venda.itens) }
     : prev;
   return removerRecebimentoVenda(semEstoque, venda.id);
+}
+
+/** Atualiza a venda; baixa estoque só na passagem para concluída. */
+function aplicarAtualizacaoVenda(prev: AppData, atual: Venda, atualizada: Venda): AppData {
+  const state: AppData = {
+    ...prev,
+    vendas: prev.vendas.map((v) => (v.id === atual.id ? atualizada : v)),
+  };
+  const passouAConcluida = !isVendaConcluida(atual) && isVendaConcluida(atualizada);
+  const comEstoque = passouAConcluida
+    ? { ...state, estoque: baixarEstoqueFifo(state.estoque, atualizada.itens) }
+    : state;
+  return lancarRecebimentoVenda(comEstoque, atualizada, atualizada.data);
+}
+
+function vendaAposConfirmarEntrega(venda: Venda): Venda {
+  const confirmada: Venda = { ...venda, entrega: 'entregue' };
+  if (isVendaConcluida(venda) || vendaTemPendenciaConfirmacao(confirmada)) return confirmada;
+  return { ...confirmada, status: 'concluida' };
+}
+
+function vendaAposReceber(venda: Venda): Venda {
+  const paga: Venda = { ...venda, pago: 'pago' };
+  if (isVendaConcluida(venda) || vendaTemPendenciaConfirmacao(paga)) return paga;
+  return { ...paga, status: 'concluida' };
 }
 
 /** Baixa estoque na concluída e lança recebimento só quando está Pago. */
@@ -1397,13 +1425,20 @@ export default function ChocoGest() {
     const total = totalLiquidoVenda(novaVenda.itens, descontoTipo, descontoInformado);
     const dataOperacao = normalizeDateISO(novaVenda.data);
     const editando = vendaEditandoId !== null;
+    const antiga = editando ? data.vendas.find((v) => v.id === vendaEditandoId) : undefined;
+    const status = statusPermitidoVenda(
+      { entrega: novaVenda.entrega, pago: novaVenda.pago, status: novaVenda.status },
+      novaVenda.status,
+      Boolean(antiga && isVendaConcluida(antiga))
+    );
+    const forcouPendente = novaVenda.status === 'concluida' && status !== 'concluida';
 
     const venda: Venda = {
       id: editando ? vendaEditandoId : nextId(data.vendas),
       data: dataOperacao,
       cliente: novaVenda.cliente.trim(),
       formaPagamento: novaVenda.formaPagamento,
-      status: novaVenda.status,
+      status,
       entrega: novaVenda.entrega,
       pago: novaVenda.pago,
       total,
@@ -1448,109 +1483,115 @@ export default function ChocoGest() {
     });
 
     resetFormVenda();
-    alert(editando ? 'Venda atualizada com sucesso!' : mensagemVendaRegistrada(venda));
+    const motivo = forcouPendente ? motivoImpedeConclusao(venda) : null;
+    const extra =
+      motivo && editando
+        ? ` ${motivo} A venda permanece na Relação de vendas pendentes.`
+        : '';
+    alert((editando ? 'Venda atualizada com sucesso!' : mensagemVendaRegistrada(venda)) + extra);
   };
 
   const concluirVenda = (id: number) => {
     const venda = data.vendas.find((v) => v.id === id);
     if (!venda || isVendaConcluida(venda)) return;
 
+    const motivo = motivoImpedeConclusao(venda);
+    if (motivo) {
+      return alert(
+        `Não é possível concluir esta venda. ${motivo} Ela permanece na Relação de vendas pendentes.`
+      );
+    }
+
     const vendaConcluida: Venda = { ...venda, status: 'concluida' };
     const erro = validarEstoqueVenda(data.estoque, vendaConcluida);
     if (erro) return alert(erro);
 
-    const financeiroMsg = isVendaPaga(venda)
-      ? 'O recebimento já está lançado.'
-      : 'O valor continua a receber.';
-    if (!confirm(`Concluir venda para ${venda.cliente}? O estoque será baixado. ${financeiroMsg}`)) {
+    if (!confirm(`Concluir venda para ${venda.cliente}? O estoque será baixado.`)) {
       return;
     }
 
     update((prev) => {
       const atual = prev.vendas.find((v) => v.id === id);
-      if (!atual || isVendaConcluida(atual)) return prev;
-      const concluida: Venda = { ...atual, status: 'concluida' };
-      let state: AppData = {
-        ...prev,
-        vendas: prev.vendas.map((v) => (v.id === id ? concluida : v)),
-        estoque: baixarEstoqueFifo(prev.estoque, concluida.itens),
-      };
-      state = lancarRecebimentoVenda(state, concluida, concluida.data);
-      return state;
+      if (!atual || isVendaConcluida(atual) || motivoImpedeConclusao(atual)) return prev;
+      return aplicarAtualizacaoVenda(prev, atual, { ...atual, status: 'concluida' });
     });
   };
 
   const receberVenda = (id: number) => {
     const venda = data.vendas.find((v) => v.id === id);
     if (!venda || isVendaPaga(venda)) return;
-    if (
-      !confirm(
-        `Lançar recebimento de ${formatCurrency(venda.total)} (${venda.formaPagamento}) de ${venda.cliente}?`
-      )
-    ) {
-      return;
+
+    const pagaPrevista = vendaAposReceber(venda);
+    const vaiConcluir = !isVendaConcluida(venda) && isVendaConcluida(pagaPrevista);
+    if (vaiConcluir) {
+      const erro = validarEstoqueVenda(data.estoque, pagaPrevista);
+      if (erro) return alert(erro);
     }
+
+    const confirmMsg = vaiConcluir
+      ? `Lançar recebimento de ${formatCurrency(venda.total)} (${venda.formaPagamento}) de ${venda.cliente}? A venda será concluída e o estoque será baixado.`
+      : `Lançar recebimento de ${formatCurrency(venda.total)} (${venda.formaPagamento}) de ${venda.cliente}?`;
+    if (!confirm(confirmMsg)) return;
+
     if (vendaEditandoId === id) {
-      setNovaVenda((p) => ({ ...p, pago: 'pago' }));
+      setNovaVenda((p) => ({
+        ...p,
+        pago: 'pago',
+        status: vaiConcluir ? 'concluida' : p.status,
+      }));
     }
     update((prev) => {
       const atual = prev.vendas.find((v) => v.id === id);
       if (!atual || isVendaPaga(atual)) return prev;
-      const paga: Venda = { ...atual, pago: 'pago' };
-      const state: AppData = {
-        ...prev,
-        vendas: prev.vendas.map((v) => (v.id === id ? paga : v)),
-      };
-      return lancarRecebimentoVenda(state, paga, paga.data);
+      return aplicarAtualizacaoVenda(prev, atual, vendaAposReceber(atual));
     });
-    alert('Recebimento lançado.');
+    alert(
+      vaiConcluir
+        ? 'Recebimento lançado. Venda concluída.'
+        : entregaAguardandoConfirmacao(venda)
+          ? 'Recebimento lançado. A venda permanece pendente até confirmar a entrega.'
+          : 'Recebimento lançado.'
+    );
   };
 
   const confirmarEntregaVenda = (id: number) => {
     const venda = data.vendas.find((v) => v.id === id);
     if (!venda || !entregaAguardandoConfirmacao(venda)) return;
 
-    const pendente = !isVendaConcluida(venda);
-    if (pendente) {
-      const erro = validarEstoqueVenda(data.estoque, { ...venda, status: 'concluida' });
+    const confirmadaPrevista = vendaAposConfirmarEntrega(venda);
+    const vaiConcluir = !isVendaConcluida(venda) && isVendaConcluida(confirmadaPrevista);
+    if (vaiConcluir) {
+      const erro = validarEstoqueVenda(data.estoque, confirmadaPrevista);
       if (erro) return alert(erro);
     }
 
-    const msg = pendente
-      ? `Confirmar entrega para ${venda.cliente}? O pedido fica Entregue e o estoque será baixado.`
-      : `Confirmar entrega para ${venda.cliente}?`;
+    const msg = vaiConcluir
+      ? `Confirmar entrega para ${venda.cliente}? A venda será concluída e o estoque será baixado.`
+      : !isVendaPaga(venda)
+        ? `Confirmar entrega para ${venda.cliente}? A venda permanece pendente até o recebimento do pagamento.`
+        : `Confirmar entrega para ${venda.cliente}?`;
     if (!confirm(msg)) return;
 
     if (vendaEditandoId === id) {
       setNovaVenda((p) => ({
         ...p,
         entrega: 'entregue',
-        status: pendente ? 'concluida' : p.status,
+        status: vaiConcluir ? 'concluida' : p.status,
       }));
     }
 
     update((prev) => {
       const atual = prev.vendas.find((v) => v.id === id);
       if (!atual || !entregaAguardandoConfirmacao(atual)) return prev;
-      const confirmada: Venda = {
-        ...atual,
-        entrega: 'entregue',
-        status: isVendaConcluida(atual) ? (atual.status ?? 'concluida') : 'concluida',
-      };
-      if (isVendaConcluida(atual)) {
-        return {
-          ...prev,
-          vendas: prev.vendas.map((v) => (v.id === id ? confirmada : v)),
-        };
-      }
-      const state: AppData = {
-        ...prev,
-        vendas: prev.vendas.map((v) => (v.id === id ? confirmada : v)),
-        estoque: baixarEstoqueFifo(prev.estoque, confirmada.itens),
-      };
-      return lancarRecebimentoVenda(state, confirmada, confirmada.data);
+      return aplicarAtualizacaoVenda(prev, atual, vendaAposConfirmarEntrega(atual));
     });
-    alert('Entrega confirmada.');
+    alert(
+      vaiConcluir
+        ? 'Entrega confirmada. Venda concluída.'
+        : !isVendaPaga(venda)
+          ? 'Entrega confirmada. A venda permanece pendente até o recebimento do pagamento.'
+          : 'Entrega confirmada.'
+    );
   };
 
   const adicionarIngrediente = () => {
@@ -2301,14 +2342,12 @@ export default function ChocoGest() {
   const aReceber = useMemo(() => resumoAReceber(data.vendas), [data.vendas]);
   const aEntregar = useMemo(() => resumoAEntregar(data.vendas), [data.vendas]);
   const reservasPendentes = useMemo(() => produtosReservadosPendentes(data.vendas), [data.vendas]);
-  const vendasConcluidas = useMemo(
-    () =>
-      data.vendas
-        .filter(isVendaConcluida)
-        .slice()
-        .sort((a, b) => b.data.localeCompare(a.data) || b.id - a.id),
-    [data.vendas]
-  );
+  const vendasConcluidas = useMemo(() => listarVendasConcluidas(data.vendas), [data.vendas]);
+  const vendaEmEdicao =
+    vendaEditandoId !== null ? data.vendas.find((v) => v.id === vendaEditandoId) : undefined;
+  const formImpedeNovaConclusao =
+    (novaVenda.entrega === 'a_entregar' || novaVenda.pago === 'a_receber') &&
+    !(vendaEmEdicao && isVendaConcluida(vendaEmEdicao));
 
   if (!hydrated) {
     return (
@@ -2463,7 +2502,7 @@ export default function ChocoGest() {
                   {
                     label: 'Total Vendas',
                     value: formatCurrency(
-                      sumBy(data.vendas.filter((v) => isVendaConcluida(v)), (v) => v.total)
+                      sumBy(data.vendas.filter((v) => isVendaFinalizada(v)), (v) => v.total)
                     ),
                     icon: '🛒',
                     detalhe: 'vendas concluídas',
@@ -3363,9 +3402,20 @@ export default function ChocoGest() {
                     <select
                       className={inputCls}
                       value={novaVenda.entrega}
-                      onChange={(e) =>
-                        setNovaVenda((p) => ({ ...p, entrega: e.target.value as EntregaVenda }))
-                      }
+                      onChange={(e) => {
+                        const entrega = e.target.value as EntregaVenda;
+                        setNovaVenda((p) => {
+                          const impede = entrega === 'a_entregar' || p.pago === 'a_receber';
+                          const manterConcluida = Boolean(
+                            vendaEmEdicao && isVendaConcluida(vendaEmEdicao)
+                          );
+                          return {
+                            ...p,
+                            entrega,
+                            status: impede && !manterConcluida ? 'em_processamento' : p.status,
+                          };
+                        });
+                      }}
                     >
                       {ENTREGA_VENDA_OPCOES.map((opcao) => (
                         <option key={opcao} value={opcao}>
@@ -3378,9 +3428,20 @@ export default function ChocoGest() {
                     <select
                       className={inputCls}
                       value={novaVenda.pago}
-                      onChange={(e) =>
-                        setNovaVenda((p) => ({ ...p, pago: e.target.value as SituacaoPagoVenda }))
-                      }
+                      onChange={(e) => {
+                        const pago = e.target.value as SituacaoPagoVenda;
+                        setNovaVenda((p) => {
+                          const impede = p.entrega === 'a_entregar' || pago === 'a_receber';
+                          const manterConcluida = Boolean(
+                            vendaEmEdicao && isVendaConcluida(vendaEmEdicao)
+                          );
+                          return {
+                            ...p,
+                            pago,
+                            status: impede && !manterConcluida ? 'em_processamento' : p.status,
+                          };
+                        });
+                      }}
                     >
                       {PAGO_VENDA_OPCOES.map((opcao) => (
                         <option key={opcao} value={opcao}>
@@ -3398,7 +3459,9 @@ export default function ChocoGest() {
                       }
                     >
                       <option value="em_processamento">{STATUS_VENDA_LABEL.em_processamento}</option>
-                      <option value="concluida">{STATUS_VENDA_LABEL.concluida}</option>
+                      <option value="concluida" disabled={formImpedeNovaConclusao}>
+                        {STATUS_VENDA_LABEL.concluida}
+                      </option>
                     </select>
                   </Field>
                   <Field label="Desconto">
@@ -3441,11 +3504,10 @@ export default function ChocoGest() {
                   ) : null}
                 </div>
                 <p className="text-amber-400/70 text-xs mb-3">
-                  <strong>Pendente</strong> reserva o produto e não baixa o estoque.{' '}
-                  <strong>Concluída</strong> baixa o estoque.{' '}
-                  <strong>Pago</strong> lança o recebimento no Caixa (Dinheiro) ou no Banco.{' '}
-                  <strong>A receber</strong> deixa o valor em aberto até marcar como Pago.{' '}
-                  <strong>A entregar</strong> espera o botão <strong>Confirmar entrega</strong>. Se o pedido ainda estiver pendente, essa confirmação também baixa o estoque.
+                  <strong>Concluída</strong> só vale com entrega confirmada (Retirada ou Entregue) e pagamento <strong>Pago</strong>.{' '}
+                  Se falta confirmar a entrega ou o recebimento, a venda fica na Relação de vendas pendentes.{' '}
+                  <strong>Pendente</strong> reserva o produto e não baixa o estoque. O estoque baixa ao concluir.{' '}
+                  <strong>Pago</strong> lança o recebimento no Caixa (Dinheiro) ou no Banco.
                 </p>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
                   <Field label="Produto">
@@ -3589,7 +3651,7 @@ export default function ChocoGest() {
               <Card className="mb-6">
                 <h4 className="text-amber-200 font-medium mb-1">A receber</h4>
                 <p className="text-amber-400/70 text-xs mb-3">
-                  Vendas com Pago em <strong>A receber</strong>, pendentes ou concluídas. O valor ainda não entrou no Caixa nem no Banco.
+                  Vendas com Pago em <strong>A receber</strong>. Continuam na Relação de vendas pendentes até o recebimento.
                 </p>
                 <div className="grid grid-cols-2 gap-3">
                   <div className="bg-[#2c2118] rounded-xl p-3">
@@ -3606,8 +3668,8 @@ export default function ChocoGest() {
               <Card className="mb-6 border border-amber-600/40">
                 <h4 className="text-amber-200 font-medium mb-1">Relação de vendas pendentes</h4>
                 <p className="text-amber-400/70 text-xs mb-4">
-                  Pedidos com status <strong>Pendente</strong>: reservam saldo livre do produto.
-                  O estoque baixa ao concluir. O recebimento entra quando a venda está <strong>Pago</strong>.
+                  Vendas que ainda não estão concluídas: falta confirmar a entrega ou o recebimento.
+                  Enquanto o status for <strong>Pendente</strong>, o produto fica reservado. O estoque baixa ao concluir.
                 </p>
 
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
@@ -3697,7 +3759,7 @@ export default function ChocoGest() {
                         <tr className="text-amber-300 border-b border-amber-700">
                           <th className="text-left py-2">Data</th>
                           <th className="text-left py-2">Cliente</th>
-                          <th className="text-left py-2">Itens reservados</th>
+                          <th className="text-left py-2">Itens</th>
                           <th className="text-left py-2">Pagamento</th>
                           <th className="text-left py-2">Entrega</th>
                           <th className="text-left py-2">Pago</th>
@@ -3715,7 +3777,7 @@ export default function ChocoGest() {
                           >
                             <td className="py-2 quadro-titulo" data-label="Data">{formatDate(v.data)}</td>
                             <td className="py-2 font-medium" data-label="Cliente">{v.cliente}</td>
-                            <td className="py-2 text-amber-200/90 quadro-texto" data-label="Itens reservados">
+                            <td className="py-2 text-amber-200/90 quadro-texto" data-label="Itens">
                               {v.itens.length > 0 ? (
                                 <div className="space-y-1">
                                   {v.itens.map((i) => (
@@ -3750,9 +3812,11 @@ export default function ChocoGest() {
                                     Receber
                                   </Btn>
                                 )}
-                                <Btn variant="primary" className="!px-2.5 !py-1.5 text-xs whitespace-normal leading-tight" onClick={() => concluirVenda(v.id)}>
-                                  Concluir
-                                </Btn>
+                                {!isVendaConcluida(v) && !vendaTemPendenciaConfirmacao(v) && (
+                                  <Btn variant="primary" className="!px-2.5 !py-1.5 text-xs whitespace-normal leading-tight" onClick={() => concluirVenda(v.id)}>
+                                    Concluir
+                                  </Btn>
+                                )}
                                 <Btn variant="secondary" className="!px-2.5 !py-1.5 text-xs whitespace-normal leading-tight" onClick={() => editarVenda(v)}>
                                   Editar
                                 </Btn>
@@ -3780,8 +3844,7 @@ export default function ChocoGest() {
                   </div>
                 ) : (
                   <p className="text-amber-400/60 py-2">
-                    Nenhuma venda pendente. Use o status <strong>Pendente</strong> no formulário para
-                    reservar produtos sem baixar estoque.
+                    Nenhuma venda pendente. A venda só sai desta lista quando a entrega e o pagamento estão confirmados.
                   </p>
                 )}
               </Card>
@@ -3789,7 +3852,7 @@ export default function ChocoGest() {
               <Card className="mb-6">
                 <h4 className="text-amber-200 font-medium mb-1">Histórico de vendas concluídas</h4>
                 <p className="text-amber-400/70 text-xs mb-4">
-                  Vendas já finalizadas (estoque baixado). O recebimento entra no financeiro quando está Pago.
+                  Vendas com entrega confirmada e pagamento recebido. O estoque já foi baixado.
                 </p>
                 <div className="quadro-fit">
                   <div className="quadro-fit-corpo">
@@ -4029,7 +4092,7 @@ export default function ChocoGest() {
                           <td className="py-3 text-right tabular-nums" data-label="Valor">
                             {formatCurrency(
                               sumBy(
-                                data.vendas.filter((v) => isVendaConcluida(v)),
+                                data.vendas.filter((v) => isVendaFinalizada(v)),
                                 (v) => v.total
                               )
                             )}

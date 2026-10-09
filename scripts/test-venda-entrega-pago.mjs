@@ -33,6 +33,28 @@ function entregaAguardandoConfirmacao(venda) {
   return normalizarEntregaVenda(venda.entrega, venda.status) === 'a_entregar';
 }
 
+function vendaTemPendenciaConfirmacao(venda) {
+  return entregaAguardandoConfirmacao(venda) || !isVendaPaga(venda);
+}
+
+function isVendaFinalizada(venda) {
+  return isVendaConcluida(venda) && !vendaTemPendenciaConfirmacao(venda);
+}
+
+function isVendaPendente(venda) {
+  return !isVendaFinalizada(venda);
+}
+
+function statusPermitidoVenda(venda, statusDesejado, jaEraConcluida = false) {
+  if (statusDesejado !== 'concluida') return 'em_processamento';
+  if (!vendaTemPendenciaConfirmacao({ ...venda, status: statusDesejado })) return 'concluida';
+  return jaEraConcluida ? 'concluida' : 'em_processamento';
+}
+
+function listarVendasPendentes(vendas) {
+  return vendas.filter(isVendaPendente);
+}
+
 function resumoAEntregar(vendas) {
   const abertas = vendas.filter((v) => entregaAguardandoConfirmacao(v));
   return {
@@ -98,5 +120,42 @@ const aEntregar = resumoAEntregar([
 ]);
 assert(aEntregar.quantidade === 2, 'a entregar conta só quem ainda não confirmou');
 assert(aEntregar.valorTotal === 100.5, 'valor a entregar soma as entregas em aberto');
+
+assert(!isVendaFinalizada(concluidaAberta), 'concluída a entregar e a receber não está finalizada');
+assert(isVendaPendente(concluidaAberta), 'concluída com pendência continua pendente');
+assert(isVendaPendente(pendentePaga), 'pendente paga e retirada continua pendente');
+assert(
+  isVendaFinalizada({ status: 'concluida', entrega: 'entregue', pago: 'pago' }),
+  'entregue e paga está finalizada'
+);
+assert(
+  isVendaFinalizada({ status: 'concluida', entrega: 'retirada', pago: 'pago' }),
+  'retirada e paga está finalizada'
+);
+
+const lista = listarVendasPendentes([
+  { ...concluidaAberta, id: 1 },
+  { ...pendentePaga, id: 2 },
+  { status: 'concluida', entrega: 'retirada', pago: 'pago', id: 3 },
+  { status: 'concluida', entrega: 'entregue', pago: 'a_receber', id: 4 },
+]);
+assert(lista.map((v) => v.id).join(',') === '1,2,4', 'pendentes incluem entrega ou pagamento em aberto');
+
+assert(
+  statusPermitidoVenda({ entrega: 'a_entregar', pago: 'pago' }, 'concluida') === 'em_processamento',
+  'não conclui com entrega pendente'
+);
+assert(
+  statusPermitidoVenda({ entrega: 'retirada', pago: 'a_receber' }, 'concluida') === 'em_processamento',
+  'não conclui com pagamento pendente'
+);
+assert(
+  statusPermitidoVenda({ entrega: 'retirada', pago: 'pago' }, 'concluida') === 'concluida',
+  'conclui quando entrega e pagamento estão confirmados'
+);
+assert(
+  statusPermitidoVenda({ entrega: 'entregue', pago: 'a_receber' }, 'concluida', true) === 'concluida',
+  'venda já concluída com pendência antiga mantém o status gravado'
+);
 
 console.log('OK — entrega e pago em vendas');
