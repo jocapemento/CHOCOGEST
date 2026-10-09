@@ -93,6 +93,7 @@ import {
   vendasDoProduto,
 } from '@/lib/estoque';
 import {
+  calcularPrecoSugerido,
   catalogoProdutosPrecificacao,
   historicoPrecosDoProduto,
   historicoPrecosOrdenado,
@@ -2226,7 +2227,7 @@ export default function ChocoGest() {
     }
 
     const custo = produtoInfo.custoUnitario;
-    const preco = custo * (1 + margemLucro / 100);
+    const preco = calcularPrecoSugerido(custo, margemLucro);
 
     update((prev) => {
       const registro: PrecoGerado = {
@@ -2298,7 +2299,7 @@ export default function ChocoGest() {
     nomeProdutoIgual(p.nome, produtoPreco)
   );
   const custoProduto = produtoSelecionado ? produtoSelecionado.custoUnitario : 0;
-  const precoSugerido = custoProduto * (1 + margemLucro / 100);
+  const precoSugerido = calcularPrecoSugerido(custoProduto, margemLucro);
 
   /** Histórico completo — nunca esconde precificações anteriores ao filtrar o formulário. */
   const precosExibidos = historicoPrecosOrdenado(data.precosGerados);

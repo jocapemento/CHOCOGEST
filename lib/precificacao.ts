@@ -5,8 +5,18 @@ import {
   custoUltimaProducaoDoProduto,
   type SaldoEstoque,
 } from '@/lib/estoque';
-import { arredondarQuantidade } from '@/lib/format';
+import { arredondarPreco, arredondarQuantidade } from '@/lib/format';
+import { ultimoPrecoRegistrado } from '@/lib/preco-venda';
 import type { AppData, EstoqueItem, PrecoGerado, Producao } from '@/lib/types';
+
+export {
+  calcularPrecoSugerido,
+  historicoPrecosDoProduto,
+  historicoPrecosOrdenado,
+  nomeProdutoIgual,
+  precoUnitarioParaVenda,
+  ultimoPrecoRegistrado,
+} from '@/lib/preco-venda';
 
 export interface ResumoProdutoPrecificado {
   produto: string;
@@ -45,33 +55,7 @@ export interface ProdutoParaPrecificacao {
 }
 
 function arredondar(valor: number): number {
-  return Math.round(valor * 100) / 100;
-}
-
-export function nomeProdutoIgual(a: string, b: string): boolean {
-  return a.trim().toLowerCase() === b.trim().toLowerCase();
-}
-
-/** Histórico completo, mais recente primeiro. */
-export function historicoPrecosOrdenado(precosGerados: PrecoGerado[]): PrecoGerado[] {
-  return [...precosGerados].sort((a, b) => b.data.localeCompare(a.data) || b.id - a.id);
-}
-
-export function historicoPrecosDoProduto(
-  precosGerados: PrecoGerado[],
-  produto: string
-): PrecoGerado[] {
-  if (!produto.trim()) return historicoPrecosOrdenado(precosGerados);
-  return historicoPrecosOrdenado(precosGerados).filter((p) =>
-    nomeProdutoIgual(p.produto, produto)
-  );
-}
-
-export function ultimoPrecoRegistrado(
-  precosGerados: PrecoGerado[],
-  produto: string
-): PrecoGerado | undefined {
-  return historicoPrecosDoProduto(precosGerados, produto)[0];
+  return arredondarPreco(valor);
 }
 
 function custoUltimaProducao(
@@ -150,19 +134,6 @@ export function catalogoProdutosPrecificacao(
       };
     })
     .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
-}
-
-/** Preço unitário para venda: prioriza o último preço registrado em Precificação. */
-export function precoUnitarioParaVenda(
-  precosGerados: PrecoGerado[],
-  produto: string,
-  custoUnitario = 0
-): { valor: number; origem: 'precificacao' | 'custo'; registro?: PrecoGerado } {
-  const registro = ultimoPrecoRegistrado(precosGerados, produto);
-  if (registro && registro.precoSugerido > 0) {
-    return { valor: registro.precoSugerido, origem: 'precificacao', registro };
-  }
-  return { valor: custoUnitario, origem: 'custo' };
 }
 
 export function totalizarProdutosPrecificados(

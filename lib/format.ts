@@ -30,6 +30,13 @@ export function formatCurrency(value: number | null | undefined): string {
   return n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 }
 
+/** Reais com centavos, o mesmo arredondamento de formatCurrency. */
+export function arredondarPreco(valor: number): number {
+  const n = Number(valor);
+  if (!Number.isFinite(n)) return 0;
+  return Math.round(n * 100) / 100;
+}
+
 export function formatUsd(value: number | null | undefined): string {
   const n = Number(value);
   if (!Number.isFinite(n)) return 'US$\u00a00.00';
