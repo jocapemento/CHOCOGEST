@@ -5,7 +5,7 @@ import {
   tipoEstoqueCadeia,
 } from '@/lib/cadeia-producao';
 import { arredondarQuantidade, formatQuantidadeUnidade } from '@/lib/format';
-import { massaRegistrada } from '@/lib/fracionar-massa';
+import { massaRegistrada, quantidadeParaPerda, quantidadeParaRateio } from '@/lib/fracionar-massa';
 import type {
   Compra,
   EstoqueItem,
@@ -460,36 +460,56 @@ function camposMassaFracionada(p: Partial<ProdutoGeradoProducao>): Pick<
   };
 }
 
-export function totalSaidaProdutos(
-  produtos: ProdutoGeradoProducao[]
+function somarMesmaUnidade(
+  partes: { quantidade: number; unidade: string }[]
 ): { total: number; unidade: string } | null {
-  if (produtos.length === 0) return null;
-
-  const partes = produtos.map((p) => massaRegistrada(p));
+  if (partes.length === 0) return null;
   const unidade = partes[0].unidade || 'kg';
   for (const parte of partes) {
     if ((parte.unidade || 'kg').toLowerCase() !== unidade.toLowerCase()) return null;
   }
-
   const total = arredondarQuantidade(partes.reduce((acc, parte) => acc + parte.quantidade, 0));
   return { total, unidade };
 }
 
-/** Rateia o custo total do lote (matéria-prima + gás + embalagem) por massa entre os produtos de saída. */
+export function totalSaidaProdutos(
+  produtos: ProdutoGeradoProducao[]
+): { total: number; unidade: string } | null {
+  if (produtos.length === 0) return null;
+  return somarMesmaUnidade(produtos.map((p) => massaRegistrada(p)));
+}
+
+/** Saída de peso. Produto em unidades fica de fora da perda. */
+function totalSaidaPeso(
+  produtos: ProdutoGeradoProducao[]
+): { total: number; unidade: string } | null {
+  const partes = produtos
+    .map((p) => quantidadeParaPerda(p))
+    .filter((parte): parte is { quantidade: number; unidade: string } => parte != null);
+  return somarMesmaUnidade(partes);
+}
+
+export function loteRateiaCusto(produtos: ProdutoGeradoProducao[]): boolean {
+  if (produtos.length === 0) return false;
+  return somarMesmaUnidade(produtos.map((p) => quantidadeParaRateio(p))) != null;
+}
+
+/** Rateia o custo do lote. Em unidades, a quantidade é a unidade; no peso, a massa. */
 export function alocarCustoEntreProdutos(
   custoTotal: number,
   produtos: ProdutoGeradoProducao[]
 ): ProdutoGeradoProducao[] {
-  const saida = totalSaidaProdutos(produtos);
+  const partes = produtos.map((p) => quantidadeParaRateio(p));
+  const saida = somarMesmaUnidade(partes);
   const totalQtd = saida?.total ?? 0;
 
   if (totalQtd <= 0) {
     return produtos.map((p) => ({ ...p, custoAlocado: 0 }));
   }
 
-  return produtos.map((p) => ({
+  return produtos.map((p, idx) => ({
     ...p,
-    custoAlocado: arredondarQuantidade((custoTotal * massaRegistrada(p).quantidade) / totalQtd),
+    custoAlocado: arredondarQuantidade((custoTotal * partes[idx].quantidade) / totalQtd),
   }));
 }
 
@@ -549,8 +569,9 @@ export function calcularPerdaProducao(
     unidade: producao.unidade ?? 'kg',
     produtos: producao.produtos,
   });
-  const saidaInfo = totalSaidaProdutos(produtos);
+  const saidaInfo = totalSaidaPeso(produtos);
   if (!saidaInfo) return null;
+  if (saidaInfo.unidade.toLowerCase() !== entradaInfo.unidade.toLowerCase()) return null;
 
   const saida = arredondarQuantidade(saidaInfo.total);
   const perdaQuantidade = arredondarQuantidade(Math.max(0, entradaInfo.total - saida));
@@ -739,11 +760,9 @@ export function custoUltimaProducaoDoProduto(
       const custo =
         prod.custoAlocado !== undefined && prod.custoAlocado !== null
           ? prod.custoAlocado
-          : (() => {
-              const saida = totalSaidaProdutos(produtosDaProducao(p));
-              if (!saida || saida.total <= 0) return 0;
-              return (p.custoEstimado * massaRegistrada(prod).quantidade) / saida.total;
-            })();
+          : (alocarCustoEntreProdutos(p.custoEstimado, produtosDaProducao(p)).find(
+              (item) => item.nome.toLowerCase() === key
+            )?.custoAlocado ?? 0);
       return {
         data: p.data,
         id: p.id,

@@ -1,7 +1,26 @@
-import { arredondarQuantidade, formatQuantidade, formatQuantidadeUnidade } from './format';
+import { arredondarQuantidade, formatQuantidadeUnidade } from './format';
 
-/** Unidade de estoque quando o peso do produto vira unidades (barras, tabletes). */
+/** Unidade de estoque quando o produto é contado em unidades (barras, tabletes). */
 export const UNIDADE_FRACIONADA = 'un';
+
+const UNIDADES_CONTAGEM = new Set([
+  'un',
+  'uns',
+  'und',
+  'unidade',
+  'unidades',
+  'pc',
+  'pç',
+  'peca',
+  'pecas',
+  'peça',
+  'peças',
+]);
+
+/** Produto contado por unidade, sem peso. */
+export function ehUnidadeContagem(unidade: string | undefined | null): boolean {
+  return UNIDADES_CONTAGEM.has(chaveUnidade(unidade ?? ''));
+}
 
 const GRAMAS_POR_UNIDADE: Record<string, number> = {
   mg: 0.001,
@@ -62,6 +81,25 @@ export function unidadesFracionadas(
   return arredondado > 0 ? arredondado : null;
 }
 
+/** Peso na perda. Produto em unidades não entra. */
+export function quantidadeParaPerda(
+  produto: ProdutoComMassa
+): { quantidade: number; unidade: string } | null {
+  if (ehUnidadeContagem(produto.unidade)) return null;
+  return massaRegistrada(produto);
+}
+
+/**
+ * Base do rateio de custo.
+ * Lote novo em unidades usa a quantidade. Lote antigo com massa registrada segue o peso.
+ */
+export function quantidadeParaRateio(produto: ProdutoComMassa): { quantidade: number; unidade: string } {
+  if (ehUnidadeContagem(produto.unidade) && !(Number(produto.massa) > 0)) {
+    return { quantidade: produto.quantidade, unidade: 'un' };
+  }
+  return massaRegistrada(produto);
+}
+
 /** Massa usada na perda e no rateio. Sem fracionamento, é a própria quantidade. */
 export function massaRegistrada(produto: ProdutoComMassa): { quantidade: number; unidade: string } {
   const unidadeMassa = (produto.unidadeMassa ?? '').trim();
@@ -84,11 +122,7 @@ export function produtoFoiFracionado(produto: ProdutoComMassa): boolean {
   );
 }
 
-/** "66.667 un de 15 g (1 kg)" ou só a quantidade, se não houve fracionamento. */
+/** Quantidade do estoque. Produto em unidades não traz o peso. */
 export function descreverQuantidadeFracionada(produto: ProdutoComMassa): string {
-  const estoque = formatQuantidadeUnidade(produto.quantidade, produto.unidade);
-  if (!produtoFoiFracionado(produto)) return estoque;
-  const peso = `${formatQuantidade(produto.pesoUnidade)} ${produto.unidadePeso || 'g'}`;
-  const massa = formatQuantidadeUnidade(produto.massa, produto.unidadeMassa);
-  return `${estoque} de ${peso} (${massa})`;
+  return formatQuantidadeUnidade(produto.quantidade, produto.unidade);
 }

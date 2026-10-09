@@ -58,6 +58,7 @@ import {
 import {
   agruparEstoque,
   alocarCustoEntreProdutos,
+  loteRateiaCusto,
   baixarEstoqueFifo,
   calcularPerdaProducao,
   catalogoItensLancados,
@@ -149,8 +150,8 @@ import {
 import {
   UNIDADE_FRACIONADA,
   descreverQuantidadeFracionada,
+  ehUnidadeContagem,
   produtoFoiFracionado,
-  unidadesFracionadas,
 } from '@/lib/fracionar-massa';
 import {
   gerarPdfCompras,
@@ -681,13 +682,10 @@ const ITEM_ESTOQUE_FORM_INICIAL = {
 
 type ProdutoSaidaForm = {
   nome: string;
-  /** Peso total, na mesma unidade da matéria-prima. */
+  /** Peso, ou número de unidades quando `fracionar` está marcado. */
   quantidade: number;
   unidade: string;
   fracionar: boolean;
-  /** Peso de cada unidade, ex.: 15. */
-  pesoUnidade: number;
-  unidadePeso: string;
 };
 
 const PRODUTO_SAIDA_INICIAL: ProdutoSaidaForm = {
@@ -695,8 +693,6 @@ const PRODUTO_SAIDA_INICIAL: ProdutoSaidaForm = {
   quantidade: 0,
   unidade: 'kg',
   fracionar: false,
-  pesoUnidade: 0,
-  unidadePeso: 'g',
 };
 
 const PRODUCAO_FORM_INICIAL = {
@@ -712,7 +708,7 @@ const PRODUCAO_FORM_INICIAL = {
   }>,
 };
 
-/** Último lote desse nome: o formulário continua em massa, mesmo se o estoque ficou em unidades. */
+/** Último lote desse nome. Produto em unidades volta como unidades, sem peso. */
 function sugestaoProdutoSaida(
   producoes: Producao[],
   nome: string
@@ -722,19 +718,18 @@ function sugestaoProdutoSaida(
   for (const p of [...producoes].sort((a, b) => b.data.localeCompare(a.data) || b.id - a.id)) {
     const prod = produtosDaProducao(p).find((x) => x.nome.toLowerCase() === key);
     if (!prod) continue;
-    if (produtoFoiFracionado(prod)) {
-      return {
-        unidade: prod.unidadeMassa || 'kg',
-        fracionar: true,
-        pesoUnidade: prod.pesoUnidade,
-        unidadePeso: prod.unidadePeso || 'g',
-      };
+    if (ehUnidadeContagem(prod.unidade) || produtoFoiFracionado(prod)) {
+      return { unidade: UNIDADE_FRACIONADA, fracionar: true };
     }
     if (prod.unidade) {
-      return { unidade: prod.unidade, fracionar: false, pesoUnidade: 0, unidadePeso: 'g' };
+      return { unidade: prod.unidade, fracionar: false };
     }
   }
   return undefined;
+}
+
+function produtoFormEmUnidade(produto: Pick<ProdutoSaidaForm, 'fracionar' | 'unidade'>): boolean {
+  return produto.fracionar || ehUnidadeContagem(produto.unidade);
 }
 
 /** A perda fica na unidade da matéria-prima. Depois do fracionamento, `p.unidade` é "un". */
@@ -1672,6 +1667,7 @@ export default function ChocoGest() {
             p.produtos[0]?.unidade ||
             ingredientesMassaProducao(p.ingredientes)[0]?.unidade ||
             'kg',
+          fracionar: p.produtos[0]?.fracionar ?? false,
         },
       ],
     }));
@@ -1702,22 +1698,18 @@ export default function ChocoGest() {
       produtos:
         produtos.length > 0
           ? produtos.map((p) =>
-              p.massa && p.massa > 0 && p.pesoUnidade && p.pesoUnidade > 0
+              ehUnidadeContagem(p.unidade) || produtoFoiFracionado(p)
                 ? {
                     nome: p.nome,
-                    quantidade: p.massa,
-                    unidade: p.unidadeMassa || 'kg',
+                    quantidade: p.quantidade,
+                    unidade: UNIDADE_FRACIONADA,
                     fracionar: true,
-                    pesoUnidade: p.pesoUnidade,
-                    unidadePeso: p.unidadePeso || 'g',
                   }
                 : {
                     nome: p.nome,
                     quantidade: p.quantidade,
                     unidade: p.unidade || 'kg',
                     fracionar: false,
-                    pesoUnidade: 0,
-                    unidadePeso: 'g',
                   }
             )
           : [{ ...PRODUTO_SAIDA_INICIAL }],
@@ -1788,10 +1780,8 @@ export default function ChocoGest() {
       .map((p) => ({
         nome: p.nome.trim(),
         quantidade: arredondarQuantidade(Number(p.quantidade) || 0),
-        unidade: (p.unidade || 'kg').trim() || 'kg',
-        fracionar: !!p.fracionar,
-        pesoUnidade: arredondarQuantidade(Number(p.pesoUnidade) || 0),
-        unidadePeso: (p.unidadePeso || 'g').trim() || 'g',
+        unidade: produtoFormEmUnidade(p) ? UNIDADE_FRACIONADA : (p.unidade || 'kg').trim() || 'kg',
+        fracionar: produtoFormEmUnidade(p),
       }))
       .filter((p) => p.nome.length > 0);
 
@@ -1813,6 +1803,7 @@ export default function ChocoGest() {
 
     const editando = producaoEditandoId !== null;
 
+    const todosEmUnidade = produtosMassa.every((p) => p.fracionar);
     const perdaCalculada = calcularPerdaProducao({
       ingredientes: novaProducao.ingredientes,
       produtos: produtosMassa,
@@ -1823,16 +1814,19 @@ export default function ChocoGest() {
           'Informe a matéria-prima do lote. Gás e embalagem entram no custo, mas não substituem a matéria-prima.'
         );
       }
-      return alert(
-        'Não foi possível calcular a perda. Use a mesma unidade na matéria-prima e em todos os produtos gerados.'
-      );
+      if (!todosEmUnidade) {
+        return alert(
+          'Não foi possível calcular a perda. Use a mesma unidade na matéria-prima e nos produtos gerados em peso. Produto em unidades não entra nessa conta.'
+        );
+      }
     }
-    if (perdaCalculada.saida > perdaCalculada.entrada) {
+    if (perdaCalculada && perdaCalculada.saida > perdaCalculada.entrada) {
       return alert(
         `A quantidade produzida (${perdaCalculada.saida} ${perdaCalculada.unidade}) não pode ser maior que a matéria-prima lançada (${perdaCalculada.entrada} ${perdaCalculada.unidade}).`
       );
     }
     for (const p of produtosMassa) {
+      if (p.fracionar || !perdaCalculada) continue;
       if (p.unidade.toLowerCase() !== perdaCalculada.unidade.toLowerCase()) {
         return alert(
           `A unidade de "${p.nome}" ("${p.unidade}") deve ser a mesma da matéria-prima ("${perdaCalculada.unidade}").`
@@ -1840,30 +1834,15 @@ export default function ChocoGest() {
       }
     }
 
-    const produtosPreenchidos: ProdutoGeradoProducao[] = [];
-    for (const p of produtosMassa) {
-      if (!p.fracionar) {
-        produtosPreenchidos.push({ nome: p.nome, quantidade: p.quantidade, unidade: p.unidade });
-        continue;
-      }
-      if (!(p.pesoUnidade > 0)) {
-        return alert(`Informe o peso de cada unidade de "${p.nome}" (ex.: 15 g).`);
-      }
-      const unidades = unidadesFracionadas(p.quantidade, p.unidade, p.pesoUnidade, p.unidadePeso);
-      if (unidades == null) {
-        return alert(
-          `Não dá para fracionar "${p.nome}" a partir de "${p.unidade}" em pesos de "${p.unidadePeso}". Use kg ou g.`
-        );
-      }
-      produtosPreenchidos.push({
-        nome: p.nome,
-        quantidade: unidades,
-        unidade: UNIDADE_FRACIONADA,
-        massa: p.quantidade,
-        unidadeMassa: p.unidade,
-        pesoUnidade: p.pesoUnidade,
-        unidadePeso: p.unidadePeso,
-      });
+    const produtosPreenchidos: ProdutoGeradoProducao[] = produtosMassa.map((p) =>
+      p.fracionar
+        ? { nome: p.nome, quantidade: p.quantidade, unidade: UNIDADE_FRACIONADA }
+        : { nome: p.nome, quantidade: p.quantidade, unidade: p.unidade }
+    );
+    if (!loteRateiaCusto(produtosPreenchidos)) {
+      return alert(
+        'Não dá para ratear o custo entre peso e unidades no mesmo lote. Lance só produtos em unidades ou só produtos em peso.'
+      );
     }
 
     const custoEstimado = sumBy(
@@ -1877,8 +1856,12 @@ export default function ChocoGest() {
       produtos: produtosPreenchidos,
       ingredientes: novaProducao.ingredientes,
       custoEstimado,
-      quantidadePerdida: perdaCalculada.perdaQuantidade,
-      percentualPerda: perdaCalculada.perdaPercentual,
+      ...(perdaCalculada
+        ? {
+            quantidadePerdida: perdaCalculada.perdaQuantidade,
+            percentualPerda: perdaCalculada.perdaPercentual,
+          }
+        : {}),
     });
 
     if (editando) {
@@ -4279,14 +4262,6 @@ export default function ChocoGest() {
                 )}
                 <div className="space-y-3 mb-4">
                   {novaProducao.produtos.map((prod, idx) => {
-                    const unidadesPreview = prod.fracionar
-                      ? unidadesFracionadas(
-                          prod.quantidade,
-                          prod.unidade || 'kg',
-                          prod.pesoUnidade,
-                          prod.unidadePeso || 'g'
-                        )
-                      : null;
                     return (
                     <div key={idx} className="rounded-xl border border-amber-800/40 p-3 space-y-3">
                       <div className="grid grid-cols-1 sm:grid-cols-7 gap-3 items-end">
@@ -4306,7 +4281,7 @@ export default function ChocoGest() {
                           </Field>
                         </div>
                         <div className="sm:col-span-2">
-                          <Field label="Quantidade">
+                          <Field label={prod.fracionar ? 'Quantidade (un)' : 'Quantidade'}>
                             <input
                               type="number"
                               step="0.001"
@@ -4323,8 +4298,19 @@ export default function ChocoGest() {
                           <Field label="Un.">
                             <input
                               className={inputCls}
-                              value={prod.unidade}
-                              onChange={(e) => atualizarProdutoSaida(idx, { unidade: e.target.value })}
+                              value={prod.fracionar ? UNIDADE_FRACIONADA : prod.unidade}
+                              disabled={prod.fracionar}
+                              onChange={(e) => {
+                                const unidade = e.target.value;
+                                if (ehUnidadeContagem(unidade)) {
+                                  atualizarProdutoSaida(idx, {
+                                    unidade: UNIDADE_FRACIONADA,
+                                    fracionar: true,
+                                  });
+                                  return;
+                                }
+                                atualizarProdutoSaida(idx, { unidade, fracionar: false });
+                              }}
                             />
                           </Field>
                         </div>
@@ -4343,62 +4329,30 @@ export default function ChocoGest() {
                           type="checkbox"
                           className="mt-1 h-4 w-4 shrink-0 accent-amber-500"
                           checked={prod.fracionar}
-                          onChange={(e) =>
-                            atualizarProdutoSaida(idx, { fracionar: e.target.checked })
-                          }
+                          onChange={(e) => {
+                            const fracionar = e.target.checked;
+                            if (fracionar) {
+                              atualizarProdutoSaida(idx, {
+                                fracionar: true,
+                                unidade: UNIDADE_FRACIONADA,
+                              });
+                              return;
+                            }
+                            atualizarProdutoSaida(idx, {
+                              fracionar: false,
+                              unidade:
+                                ingredientesMassaProducao(novaProducao.ingredientes)[0]?.unidade ||
+                                'kg',
+                            });
+                          }}
                         />
                         <span>
-                          Fracionar em unidades
+                          Produzir em unidades
                           <span className="block text-xs text-amber-400/80 font-normal">
-                            Ex.: 1 kg de chocolate 70% em barras de 15 g. O estoque entra em unidades e a perda continua no peso.
+                            A quantidade é o número de unidades, por exemplo 66 barras. O peso não entra nesse produto.
                           </span>
                         </span>
                       </label>
-                      {prod.fracionar && (
-                        <div className="space-y-2">
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                            <Field label="Peso de cada unidade">
-                              <input
-                                type="number"
-                                step="0.001"
-                                min={0}
-                                className={inputCls}
-                                value={prod.pesoUnidade || ''}
-                                placeholder="15"
-                                onChange={(e) =>
-                                  atualizarProdutoSaida(idx, { pesoUnidade: +e.target.value })
-                                }
-                              />
-                            </Field>
-                            <Field label="Un. do peso">
-                              <select
-                                className={inputCls}
-                                value={prod.unidadePeso || 'g'}
-                                onChange={(e) =>
-                                  atualizarProdutoSaida(idx, { unidadePeso: e.target.value })
-                                }
-                              >
-                                <option value="g">g</option>
-                                <option value="kg">kg</option>
-                              </select>
-                            </Field>
-                          </div>
-                          {unidadesPreview != null ? (
-                            <p className="text-sm text-amber-300">
-                              {formatQuantidadeUnidade(prod.quantidade, prod.unidade || 'kg')} ={' '}
-                              {formatQuantidade(unidadesPreview)} un de {formatQuantidade(prod.pesoUnidade)}{' '}
-                              {prod.unidadePeso || 'g'}.
-                            </p>
-                          ) : (
-                            prod.pesoUnidade > 0 &&
-                            prod.quantidade > 0 && (
-                              <p className="text-xs text-amber-400">
-                                Use kg ou g no peso do produto e no peso de cada unidade.
-                              </p>
-                            )
-                          )}
-                        </div>
-                      )}
                     </div>
                     );
                   })}
@@ -4412,8 +4366,20 @@ export default function ChocoGest() {
                   </Btn>
                 </div>
 
+                {novaProducao.produtos.some((p) => p.fracionar && p.quantidade > 0) && (
+                  <p className="text-sm text-amber-300/90 mb-4 bg-amber-950/40 border border-amber-800/50 rounded-lg px-3 py-2">
+                    Saída em unidades:{' '}
+                    <strong>
+                      {novaProducao.produtos
+                        .filter((p) => p.fracionar && p.quantidade > 0)
+                        .map((p) => `${p.nome.trim() || 'Produto'} ${formatQuantidadeUnidade(p.quantidade, UNIDADE_FRACIONADA)}`)
+                        .join(' + ')}
+                    </strong>
+                    . O peso não entra nessa quantidade.
+                  </p>
+                )}
                 {resumoPerdaProducao &&
-                  novaProducao.produtos.some((p) => p.quantidade > 0) && (
+                  novaProducao.produtos.some((p) => p.quantidade > 0 && !p.fracionar) && (
                   <p className="text-sm text-amber-300/90 mb-4 bg-amber-950/40 border border-amber-800/50 rounded-lg px-3 py-2">
                     Entrada: <strong>{formatQuantidadeUnidade(resumoPerdaProducao.entrada, resumoPerdaProducao.unidade)}</strong>
                     {' → '}
@@ -4421,6 +4387,11 @@ export default function ChocoGest() {
                     {' — '}
                     Perda: <strong>{formatQuantidadeUnidade(resumoPerdaProducao.perdaQuantidade, resumoPerdaProducao.unidade)}</strong>
                     {' '}({resumoPerdaProducao.perdaPercentual}%)
+                    {novaProducao.produtos.some((p) => p.fracionar) && (
+                      <span className="block text-xs text-amber-400/80 mt-1">
+                        Produtos em unidades ficam de fora dessa perda de peso.
+                      </span>
+                    )}
                   </p>
                 )}
                 {novaProducao.ingredientes.length > 0 &&
@@ -4466,7 +4437,9 @@ export default function ChocoGest() {
                               .join(' + ')}
                           </td>
                           <td className="py-2 text-right text-amber-300/80">
-                            {p.quantidadePerdida && p.quantidadePerdida > 0 ? (
+                            {p.quantidadePerdida &&
+                            p.quantidadePerdida > 0 &&
+                            !produtosDaProducao(p).every((prod) => ehUnidadeContagem(prod.unidade)) ? (
                               <>
                                 {p.percentualPerda ?? 0}%
                                 <span className="block text-xs text-amber-400/60">
