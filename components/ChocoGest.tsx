@@ -23,6 +23,7 @@ import type {
   Venda,
 } from '@/lib/types';
 import { EMPTY_DATA, TIPOS_ITEM, TIPOS_ITEM_LABEL } from '@/lib/types';
+import { custoParaReporEstoque } from '@/lib/custo-reposicao';
 import { loadAppData, saveAppData, exportBackup, parseBackupFile } from '@/lib/storage';
 import { DriveBackup } from '@/components/DriveBackup';
 import {
@@ -478,7 +479,16 @@ function lancarRecebimentoVenda(prev: AppData, venda: Venda, dataOperacao: strin
 /** Repõe estoque só se a venda tinha baixado; tira o recebimento se tinha lançado. */
 function reverterEfeitosVenda(prev: AppData, venda: Venda): AppData {
   const semEstoque = isVendaConcluida(venda)
-    ? { ...prev, estoque: atualizarEstoqueCompra(prev.estoque, venda.itens) }
+    ? {
+        ...prev,
+        estoque: atualizarEstoqueCompra(
+          prev.estoque,
+          venda.itens.map((item) => ({
+            ...item,
+            valorUnit: custoParaReporEstoque(item, prev),
+          }))
+        ),
+      }
     : prev;
   return removerRecebimentoVenda(semEstoque, venda.id);
 }

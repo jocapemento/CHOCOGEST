@@ -1,5 +1,6 @@
 import { tipoEstoqueCadeia } from './cadeia-producao';
 import { vincularCartaoNasCompras } from './cartoes';
+import { corrigirCustosDevolvidosComoPreco } from './custo-reposicao';
 import {
   alocarCustoEntreProdutos,
   calcularPerdaProducao,
@@ -263,7 +264,7 @@ function normalizePrecosGerados(items: unknown[]): PrecoGerado[] {
 
 export function normalizeAppData(data: AppData): AppData {
   const cartoes = normalizeCartoes(data.cartoes);
-  return {
+  return corrigirCustosDevolvidosComoPreco({
     estoque: normalizeEstoque(data.estoque),
     compras: vincularCartaoNasCompras(normalizeCompras(data.compras), cartoes),
     vendas: normalizeVendas(data.vendas),
@@ -275,7 +276,7 @@ export function normalizeAppData(data: AppData): AppData {
     movimentosBanco: normalizeMovimentos(data.movimentosBanco),
     precosGerados: normalizePrecosGerados(data.precosGerados ?? []),
     quitacoesCartao: normalizeQuitacoesCartao(data.quitacoesCartao ?? []),
-  };
+  });
 }
 
 export function loadAppData(): AppData {
