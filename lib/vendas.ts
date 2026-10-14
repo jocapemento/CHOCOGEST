@@ -575,3 +575,45 @@ export function rankingProdutosMaisVendidos(vendas: Venda[]): ResumoProdutoVendi
         a.nome.localeCompare(b.nome, 'pt-BR')
     );
 }
+
+function normalizarBuscaCliente(nome: string): string {
+  return nome
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ');
+}
+
+/**
+ * Clientes já lançados cujo nome contém o que está sendo digitado.
+ * A grafia fica a da venda mais recente. Não sugere nada antes da primeira letra,
+ * nem quando o texto já é exatamente o único cliente encontrado.
+ */
+export function sugestoesCliente(vendas: Venda[], digitado: string): string[] {
+  const consulta = normalizarBuscaCliente(digitado);
+  if (!consulta) return [];
+
+  const porChave = new Map<string, { nome: string; data: string; id: number }>();
+  for (const venda of vendas) {
+    const nome = venda.cliente.trim();
+    const chave = normalizarBuscaCliente(nome);
+    if (!chave || !chave.includes(consulta)) continue;
+    const atual = porChave.get(chave);
+    if (!atual || venda.data > atual.data || (venda.data === atual.data && venda.id > atual.id)) {
+      porChave.set(chave, { nome, data: venda.data, id: venda.id });
+    }
+  }
+
+  const nomes = Array.from(porChave.values()).map((item) => item.nome);
+  if (nomes.length === 1 && normalizarBuscaCliente(nomes[0]) === consulta) return [];
+
+  return nomes.sort((a, b) => {
+    const an = normalizarBuscaCliente(a);
+    const bn = normalizarBuscaCliente(b);
+    const ap = an.startsWith(consulta) ? 0 : 1;
+    const bp = bn.startsWith(consulta) ? 0 : 1;
+    if (ap !== bp) return ap - bp;
+    return a.localeCompare(b, 'pt-BR');
+  });
+}

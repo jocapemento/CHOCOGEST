@@ -124,6 +124,7 @@ import {
   produtosReservadosPendentes,
   rankingMelhoresClientes,
   rankingProdutosMaisVendidos,
+  sugestoesCliente,
   resumoAEntregar,
   resumoAReceber,
   resumoVendasPendentes,
@@ -985,6 +986,8 @@ export default function ChocoGest() {
   });
   const [novaVenda, setNovaVenda] = useState({ ...VENDA_FORM_INICIAL });
   const [vendaEditandoId, setVendaEditandoId] = useState<number | null>(null);
+  const [clienteFoco, setClienteFoco] = useState(false);
+  const clienteCampoRef = useRef<HTMLDivElement>(null);
   const [itemVenda, setItemVenda] = useState({
     nome: '',
     quantidade: 1,
@@ -1025,6 +1028,17 @@ export default function ChocoGest() {
     if (!hydrated) return;
     saveAppData(data);
   }, [data, hydrated]);
+
+  useEffect(() => {
+    if (!clienteFoco) return;
+    const fechar = (event: PointerEvent) => {
+      const alvo = event.target;
+      if (alvo instanceof Node && clienteCampoRef.current?.contains(alvo)) return;
+      setClienteFoco(false);
+    };
+    document.addEventListener('pointerdown', fechar);
+    return () => document.removeEventListener('pointerdown', fechar);
+  }, [clienteFoco]);
 
   const update = useCallback((fn: (prev: AppData) => AppData) => setData(fn), []);
 
@@ -2507,6 +2521,10 @@ export default function ChocoGest() {
   );
 
   const rankingClientes = useMemo(() => rankingMelhoresClientes(data.vendas), [data.vendas]);
+  const sugestoesClientes = useMemo(
+    () => sugestoesCliente(data.vendas, novaVenda.cliente),
+    [data.vendas, novaVenda.cliente]
+  );
   const rankingProdutos = useMemo(() => rankingProdutosMaisVendidos(data.vendas), [data.vendas]);
   const resumoFormVenda = useMemo(() => {
     const subtotal = subtotalItensVenda(novaVenda.itens);
@@ -3712,7 +3730,42 @@ export default function ChocoGest() {
                     onChange={(data) => setNovaVenda((p) => ({ ...p, data }))}
                   />
                   <Field label="Cliente">
-                    <input className={inputCls} value={novaVenda.cliente} onChange={(e) => setNovaVenda((p) => ({ ...p, cliente: e.target.value }))} />
+                    <div className="relative" ref={clienteCampoRef}>
+                      <input
+                        className={inputCls}
+                        value={novaVenda.cliente}
+                        autoComplete="off"
+                        placeholder="Digite para buscar"
+                        aria-autocomplete="list"
+                        onFocus={() => setClienteFoco(true)}
+                        onChange={(e) => {
+                          setClienteFoco(true);
+                          setNovaVenda((p) => ({ ...p, cliente: e.target.value }));
+                        }}
+                      />
+                      {clienteFoco && sugestoesClientes.length > 0 && (
+                        <ul
+                          aria-label="Clientes cadastrados"
+                          className="absolute z-30 mt-1 max-h-60 w-full overflow-auto rounded-xl border border-amber-700/60 bg-[#2c2118] shadow-lg"
+                        >
+                          {sugestoesClientes.map((nome) => (
+                            <li key={nome}>
+                              <button
+                                type="button"
+                                className="w-full min-h-[44px] px-3 py-2.5 text-left text-sm text-amber-100 hover:bg-amber-800/60"
+                                onPointerDown={(e) => {
+                                  e.preventDefault();
+                                  setNovaVenda((p) => ({ ...p, cliente: nome }));
+                                  setClienteFoco(false);
+                                }}
+                              >
+                                {nome}
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
                     {clienteFormInfo?.ultimaDataCompra && (
                       <p className="text-amber-400/80 text-xs mt-1">
                         Última compra: {formatDate(clienteFormInfo.ultimaDataCompra)}
