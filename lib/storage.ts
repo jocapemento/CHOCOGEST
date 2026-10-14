@@ -1,3 +1,4 @@
+import { normalizeAlertasEstoque } from './alerta-estoque';
 import { tipoEstoqueCadeia } from './cadeia-producao';
 import { vincularCartaoNasCompras } from './cartoes';
 import { corrigirCustosDevolvidosComoPreco } from './custo-reposicao';
@@ -8,8 +9,9 @@ import {
   produtosDaProducao,
   resolverTipoIngredienteProducao,
 } from './estoque';
-import { AppData, EMPTY_DATA, STORAGE_KEYS } from './types';
+import { EMPTY_DATA, STORAGE_KEYS } from './types';
 import type {
+  AppData,
   BancoModel,
   CartaoModel,
   Compra,
@@ -266,6 +268,7 @@ export function normalizeAppData(data: AppData): AppData {
   const cartoes = normalizeCartoes(data.cartoes);
   return corrigirCustosDevolvidosComoPreco({
     estoque: normalizeEstoque(data.estoque),
+    alertasEstoque: normalizeAlertasEstoque(data.alertasEstoque),
     compras: vincularCartaoNasCompras(normalizeCompras(data.compras), cartoes),
     vendas: normalizeVendas(data.vendas),
     producoes: normalizeProducoes(data.producoes),
@@ -284,6 +287,7 @@ export function loadAppData(): AppData {
 
   const loaders: Array<{ key: keyof typeof STORAGE_KEYS; field: keyof AppData }> = [
     { key: 'estoque', field: 'estoque' },
+    { key: 'alertasEstoque', field: 'alertasEstoque' },
     { key: 'compras', field: 'compras' },
     { key: 'vendas', field: 'vendas' },
     { key: 'producoes', field: 'producoes' },
@@ -324,6 +328,7 @@ export function loadAppData(): AppData {
 export function saveAppData(data: AppData): void {
   const normalized = normalizeAppData(data);
   localStorage.setItem(STORAGE_KEYS.estoque, JSON.stringify(normalized.estoque));
+  localStorage.setItem(STORAGE_KEYS.alertasEstoque, JSON.stringify(normalized.alertasEstoque));
   localStorage.setItem(STORAGE_KEYS.compras, JSON.stringify(normalized.compras));
   localStorage.setItem(STORAGE_KEYS.vendas, JSON.stringify(normalized.vendas));
   localStorage.setItem(STORAGE_KEYS.producoes, JSON.stringify(normalized.producoes));

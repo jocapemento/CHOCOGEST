@@ -23,6 +23,11 @@ import type {
   Venda,
 } from '@/lib/types';
 import { EMPTY_DATA, TIPOS_ITEM, TIPOS_ITEM_LABEL } from '@/lib/types';
+import {
+  assinaturaItensBaixos,
+  avaliarAlertasEstoque,
+  type SituacaoEstoqueMinimo,
+} from '@/lib/alerta-estoque';
 import { custoParaReporEstoque } from '@/lib/custo-reposicao';
 import { loadAppData, saveAppData, exportBackup, parseBackupFile } from '@/lib/storage';
 import { DriveBackup } from '@/components/DriveBackup';
@@ -681,6 +686,13 @@ const ITEM_ESTOQUE_FORM_INICIAL = {
   data: todayISO(),
 };
 
+const ALERTA_ESTOQUE_FORM_INICIAL = {
+  nome: '',
+  tipo: 'MateriaPrima' as TipoItem,
+  unidade: 'kg',
+  minimo: 0,
+};
+
 type ProdutoSaidaForm = {
   nome: string;
   /** Peso, ou número de unidades quando `fracionar` está marcado. */
@@ -810,6 +822,85 @@ function Btn({
   );
 }
 
+function NomeComAlerta({ nome, baixo }: { nome: string; baixo: boolean }) {
+  return (
+    <span className="inline-flex flex-wrap items-center gap-2">
+      <span>{nome}</span>
+      {baixo && (
+        <span className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-red-900/70 text-red-100">
+          Baixo
+        </span>
+      )}
+    </span>
+  );
+}
+
+function PopupEstoqueBaixo({
+  itens,
+  onFechar,
+}: {
+  itens: SituacaoEstoqueMinimo[];
+  onFechar: () => void;
+}) {
+  const fecharRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    fecharRef.current?.focus();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onFechar();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onFechar]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/70 p-4 safe-bottom"
+      onClick={onFechar}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="alerta-estoque-titulo"
+        className="w-full max-w-lg max-h-[85vh] overflow-y-auto rounded-2xl border border-red-400/50 bg-[#3a2c22] p-5 shadow-2xl"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <h3 id="alerta-estoque-titulo" className="text-xl font-bold text-red-100">
+          Estoque baixo
+        </h3>
+        <p className="text-amber-100/90 text-sm mt-2 mb-4">
+          O saldo destes itens está no mínimo que você definiu, ou abaixo dele.
+        </p>
+        <ul className="space-y-2">
+          {itens.map((item) => (
+            <li
+              key={item.id}
+              className="flex flex-wrap items-baseline justify-between gap-2 rounded-xl border border-red-400/30 bg-red-950/40 px-3 py-2"
+            >
+              <span className="font-medium text-amber-50">{item.nome}</span>
+              <span className="text-sm text-red-100">
+                Saldo {formatQuantidadeUnidade(item.quantidade, item.unidade)}
+                {' · '}
+                mínimo {formatQuantidadeUnidade(item.minimo, item.unidade)}
+              </span>
+            </li>
+          ))}
+        </ul>
+        <div className="mt-5 flex justify-end">
+          <button
+            ref={fecharRef}
+            type="button"
+            onClick={onFechar}
+            className="touch-target inline-flex items-center justify-center px-4 py-2.5 rounded-xl text-sm font-medium transition-colors bg-red-800 hover:bg-red-700 active:bg-red-900 text-white"
+          >
+            Entendi
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Selo({
   children,
   tone,
@@ -880,6 +971,9 @@ export default function ChocoGest() {
   // Forms
   const [novoItem, setNovoItem] = useState({ ...ITEM_ESTOQUE_FORM_INICIAL });
   const [estoqueEditandoId, setEstoqueEditandoId] = useState<number | null>(null);
+  const [alertaEstoqueForm, setAlertaEstoqueForm] = useState({ ...ALERTA_ESTOQUE_FORM_INICIAL });
+  const [alertaEditandoId, setAlertaEditandoId] = useState<number | null>(null);
+  const [alertaOcultoAssinatura, setAlertaOcultoAssinatura] = useState<string | null>(null);
   const [novaCompra, setNovaCompra] = useState({ ...COMPRA_FORM_INICIAL });
   const [compraEditandoId, setCompraEditandoId] = useState<number | null>(null);
   const [itemCompra, setItemCompra] = useState({
@@ -1102,6 +1196,67 @@ export default function ChocoGest() {
     if (estoqueEditandoId === id) {
       resetFormEstoque();
     }
+  };
+
+  const resetFormAlertaEstoque = () => {
+    setAlertaEstoqueForm({ ...ALERTA_ESTOQUE_FORM_INICIAL });
+    setAlertaEditandoId(null);
+  };
+
+  const preencherAlertaEstoque = (
+    nome: string,
+    conhecido?: { tipo: TipoItem; unidade: string }
+  ) => {
+    setAlertaEstoqueForm((prev) => ({
+      ...prev,
+      nome,
+      tipo: tipoEstoqueCadeia(nome, conhecido?.tipo ?? prev.tipo),
+      unidade: conhecido?.unidade ?? prev.unidade,
+    }));
+  };
+
+  const editarAlertaEstoque = (item: SituacaoEstoqueMinimo) => {
+    setAlertaEstoqueForm({
+      nome: item.nome,
+      tipo: item.tipo,
+      unidade: item.unidade,
+      minimo: item.minimo,
+    });
+    setAlertaEditandoId(item.id);
+  };
+
+  const salvarAlertaEstoque = () => {
+    const nome = alertaEstoqueForm.nome.trim();
+    if (!nome) return alert('Informe o item do estoque mínimo.');
+    const minimo = arredondarQuantidade(alertaEstoqueForm.minimo);
+    if (!(minimo > 0)) return alert('Informe uma quantidade mínima maior que zero.');
+
+    const tipo = tipoEstoqueCadeia(nome, alertaEstoqueForm.tipo);
+    const unidade = alertaEstoqueForm.unidade.trim() || 'un';
+    const chave = nome.toLowerCase();
+
+    update((prev) => {
+      const lista = prev.alertasEstoque ?? [];
+      const atual = lista.find((alerta) => alerta.nome.toLowerCase() === chave);
+      const id = alertaEditandoId ?? atual?.id ?? nextId(lista);
+      const restantes = lista.filter(
+        (alerta) => alerta.id !== id && alerta.nome.toLowerCase() !== chave
+      );
+      return {
+        ...prev,
+        alertasEstoque: [...restantes, { id, nome, tipo, unidade, minimo }],
+      };
+    });
+    resetFormAlertaEstoque();
+  };
+
+  const removerAlertaEstoque = (id: number) => {
+    if (!confirm('Remover este estoque mínimo?')) return;
+    update((prev) => ({
+      ...prev,
+      alertasEstoque: (prev.alertasEstoque ?? []).filter((alerta) => alerta.id !== id),
+    }));
+    if (alertaEditandoId === id) resetFormAlertaEstoque();
   };
 
   const preencherItemCompra = (nome: string) => {
@@ -2274,6 +2429,44 @@ export default function ChocoGest() {
 
   // Derived
   const saldoEstoque = agruparEstoque(data.estoque);
+  const avaliacaoAlertas = useMemo(
+    () => avaliarAlertasEstoque(data.estoque, data.alertasEstoque ?? []),
+    [data.estoque, data.alertasEstoque]
+  );
+  const itensBaixos = useMemo(
+    () => avaliacaoAlertas.filter((item) => item.baixo),
+    [avaliacaoAlertas]
+  );
+  const assinaturaBaixa = useMemo(() => assinaturaItensBaixos(itensBaixos), [itensBaixos]);
+  const fecharAlertaEstoque = useCallback(() => {
+    setAlertaOcultoAssinatura(assinaturaBaixa);
+  }, [assinaturaBaixa]);
+  const mostrarPopupEstoque =
+    activeTab === 'estoque' &&
+    itensBaixos.length > 0 &&
+    alertaOcultoAssinatura !== assinaturaBaixa;
+  const opcoesAlertaEstoque = (() => {
+    const map = new Map<string, { nome: string; tipo: TipoItem; unidade: string }>();
+    const add = (nome: string, tipo: TipoItem, unidade: string) => {
+      const limpo = nome.trim();
+      const key = limpo.toLowerCase();
+      if (!key || map.has(key)) return;
+      map.set(key, {
+        nome: limpo,
+        tipo: tipoEstoqueCadeia(limpo, tipo),
+        unidade: unidade.trim() || 'un',
+      });
+    };
+    for (const item of saldoEstoque) add(item.nome, item.tipo, item.unidade);
+    for (const item of catalogoItensCompra) add(item.nome, item.tipo, item.unidade);
+    for (const producao of data.producoes) {
+      for (const produto of produtosDaProducao(producao)) {
+        add(produto.nome, 'ProdutoAcabado', produto.unidade);
+      }
+    }
+    for (const alerta of data.alertasEstoque ?? []) add(alerta.nome, alerta.tipo, alerta.unidade);
+    return Array.from(map.values()).sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+  })();
   const saldoMateriaPrima = filtrarSaldoMateriaPrima(saldoEstoque);
   const saldoProdutosGerados = filtrarSaldoProdutosGerados(saldoEstoque, data.producoes);
   const saldoEnergia = filtrarSaldoEnergia(saldoEstoque);
@@ -2351,6 +2544,15 @@ export default function ChocoGest() {
     );
   }
 
+  const itemEstaBaixo = (nome: string) =>
+    itensBaixos.some((item) => item.nome.toLowerCase() === nome.toLowerCase());
+  const classeLinhaSaldo = (nome: string) =>
+    `border-b border-amber-800/30 ${itemEstaBaixo(nome) ? 'bg-red-950/40' : ''}`;
+  const rotuloModulo = (tab: (typeof TABS)[number]) =>
+    tab.id === 'estoque' && itensBaixos.length > 0
+      ? `${tab.label} (${itensBaixos.length})`
+      : tab.label;
+
   return (
     <div className="min-h-screen bg-chocolate text-white safe-bottom" style={chocolateBgStyle}>
       {/* Header + abas mobile sticky (critério: navegação sempre acessível no telefone) */}
@@ -2426,7 +2628,7 @@ export default function ChocoGest() {
                   : 'bg-amber-900/40 text-amber-100/90 active:bg-amber-800/60'
               }`}
             >
-              {tab.label}
+              {rotuloModulo(tab)}
             </button>
           ))}
         </nav>
@@ -2446,7 +2648,7 @@ export default function ChocoGest() {
                     : 'hover:bg-amber-900/60 active:bg-amber-900/80 text-gray-300'
                 }`}
               >
-                {tab.label}
+                {rotuloModulo(tab)}
               </button>
             ))}
           </nav>
@@ -2801,7 +3003,18 @@ export default function ChocoGest() {
           {/* ESTOQUE */}
           {activeTab === 'estoque' && (
             <div>
-              <SectionTitle action={<Btn variant="secondary" onClick={() => gerarPdfEstoque(data)}>📄 PDF</Btn>}>
+              <SectionTitle
+                action={
+                  <>
+                    {itensBaixos.length > 0 && (
+                      <Btn variant="danger" onClick={() => setAlertaOcultoAssinatura(null)}>
+                        Estoque baixo ({itensBaixos.length})
+                      </Btn>
+                    )}
+                    <Btn variant="secondary" onClick={() => gerarPdfEstoque(data)}>📄 PDF</Btn>
+                  </>
+                }
+              >
                 Estoque
               </SectionTitle>
               <Card className="mb-6">
@@ -2882,6 +3095,125 @@ export default function ChocoGest() {
                 </div>
               </Card>
               <Card className="mb-6">
+                <h3 className="font-semibold mb-2 text-amber-200">
+                  {alertaEditandoId !== null ? 'Editar estoque mínimo' : 'Estoque mínimo'}
+                </h3>
+                <p className="text-amber-400/80 text-sm mb-4">
+                  Defina a quantidade mínima de cada item, na mesma unidade do saldo.
+                  O alerta abre em Estoque quando o saldo fica nesse valor ou abaixo.
+                  Um item zerado também entra no alerta.
+                </p>
+                {alertaEditandoId !== null && (
+                  <p className="text-amber-300 text-sm mb-4">Editando mínimo de {alertaEstoqueForm.nome}</p>
+                )}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                  <Field label="Item">
+                    <input
+                      list="itens-alerta-estoque"
+                      className={inputCls}
+                      value={alertaEstoqueForm.nome}
+                      onChange={(e) => {
+                        const nome = e.target.value;
+                        const conhecido = opcoesAlertaEstoque.find(
+                          (item) => item.nome.toLowerCase() === nome.trim().toLowerCase()
+                        );
+                        preencherAlertaEstoque(nome, conhecido);
+                      }}
+                    />
+                    <datalist id="itens-alerta-estoque">
+                      {opcoesAlertaEstoque.map((item) => (
+                        <option key={item.nome} value={item.nome} />
+                      ))}
+                    </datalist>
+                  </Field>
+                  <Field label="Categoria">
+                    <select
+                      className={inputCls}
+                      value={tipoCadeiaFixo(alertaEstoqueForm.nome) ?? alertaEstoqueForm.tipo}
+                      onChange={(e) =>
+                        setAlertaEstoqueForm((prev) => ({ ...prev, tipo: e.target.value as TipoItem }))
+                      }
+                      disabled={tipoCadeiaFixo(alertaEstoqueForm.nome) !== null}
+                    >
+                      {TIPOS_ITEM.map((tipo) => (
+                        <option key={tipo} value={tipo}>{TIPOS_ITEM_LABEL[tipo]}</option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field label="Unidade">
+                    <input
+                      className={inputCls}
+                      value={alertaEstoqueForm.unidade}
+                      onChange={(e) =>
+                        setAlertaEstoqueForm((prev) => ({ ...prev, unidade: e.target.value }))
+                      }
+                    />
+                  </Field>
+                  <Field label="Quantidade mínima">
+                    <input
+                      type="number"
+                      step="0.001"
+                      min={0}
+                      className={inputCls}
+                      value={alertaEstoqueForm.minimo}
+                      onChange={(e) =>
+                        setAlertaEstoqueForm((prev) => ({ ...prev, minimo: +e.target.value }))
+                      }
+                    />
+                  </Field>
+                </div>
+                <div className="flex flex-wrap gap-2 mt-4">
+                  <Btn onClick={salvarAlertaEstoque}>
+                    {alertaEditandoId !== null ? 'Atualizar mínimo' : 'Salvar mínimo'}
+                  </Btn>
+                  {alertaEditandoId !== null && (
+                    <Btn variant="secondary" onClick={resetFormAlertaEstoque}>Cancelar</Btn>
+                  )}
+                </div>
+                <div className="table-scroll mt-6">
+                  <table className="w-full text-sm min-w-[640px]">
+                    <thead>
+                      <tr className="text-amber-300 border-b border-amber-700">
+                        <th className="text-left py-2">Item</th>
+                        <th className="text-left py-2">Categoria</th>
+                        <th className="text-right py-2">Mínimo</th>
+                        <th className="text-right py-2">Saldo</th>
+                        <th className="text-left py-2">Situação</th>
+                        <th className="py-2"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {avaliacaoAlertas.map((item) => (
+                        <tr key={item.id} className={classeLinhaSaldo(item.nome)}>
+                          <td className="py-2">{item.nome}</td>
+                          <td className="py-2 text-amber-300">{TIPOS_ITEM_LABEL[item.tipo]}</td>
+                          <td className="py-2 text-right">{formatQuantidadeUnidade(item.minimo, item.unidade)}</td>
+                          <td className="py-2 text-right">{formatQuantidadeUnidade(item.quantidade, item.unidade)}</td>
+                          <td className="py-2">
+                            {item.baixo ? (
+                              <span className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-red-900/70 text-red-100">
+                                Baixo
+                              </span>
+                            ) : (
+                              <Selo tone="ok">Ok</Selo>
+                            )}
+                          </td>
+                          <td className="py-2 text-right">
+                            <div className="flex justify-end gap-2">
+                              <Btn variant="secondary" onClick={() => editarAlertaEstoque(item)}>Editar</Btn>
+                              <Btn variant="danger" onClick={() => removerAlertaEstoque(item.id)}>✕</Btn>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {avaliacaoAlertas.length === 0 && (
+                    <p className="text-amber-400/60 py-4">Nenhum estoque mínimo definido.</p>
+                  )}
+                </div>
+              </Card>
+              <Card className="mb-6">
                 <h4 className="text-amber-200 font-medium mb-4">Saldo — Matérias-primas</h4>
                 <div className="table-scroll">
                   <table className="w-full text-sm min-w-[520px]">
@@ -2895,8 +3227,8 @@ export default function ChocoGest() {
                     </thead>
                     <tbody>
                       {saldoMateriaPrima.map((item) => (
-                        <tr key={item.nome} className="border-b border-amber-800/30">
-                          <td className="py-2">{item.nome}</td>
+                        <tr key={item.nome} className={classeLinhaSaldo(item.nome)}>
+                          <td className="py-2"><NomeComAlerta nome={item.nome} baixo={itemEstaBaixo(item.nome)} /></td>
                           <td className="py-2 text-right">{formatQuantidadeUnidade(item.quantidade, item.unidade)}</td>
                           <td className="py-2 text-right">{formatCurrency(item.valorUnit)}</td>
                           <td className="py-2 text-right">{formatCurrency(item.quantidade * item.valorUnit)}</td>
@@ -2929,8 +3261,8 @@ export default function ChocoGest() {
                     </thead>
                     <tbody>
                       {saldoProdutosGerados.map((item) => (
-                        <tr key={item.nome} className="border-b border-amber-800/30">
-                          <td className="py-2">{item.nome}</td>
+                        <tr key={item.nome} className={classeLinhaSaldo(item.nome)}>
+                          <td className="py-2"><NomeComAlerta nome={item.nome} baixo={itemEstaBaixo(item.nome)} /></td>
                           <td className="py-2 text-right">{formatQuantidadeUnidade(item.quantidade, item.unidade)}</td>
                           <td className="py-2 text-right">{formatCurrency(item.valorUnit)}</td>
                           <td className="py-2 text-right">{formatCurrency(item.quantidade * item.valorUnit)}</td>
@@ -2977,8 +3309,8 @@ export default function ChocoGest() {
                     </thead>
                     <tbody>
                       {saldoEnergia.map((item) => (
-                        <tr key={`${item.nome}-${item.tipo}`} className="border-b border-amber-800/30">
-                          <td className="py-2">{item.nome}</td>
+                        <tr key={`${item.nome}-${item.tipo}`} className={classeLinhaSaldo(item.nome)}>
+                          <td className="py-2"><NomeComAlerta nome={item.nome} baixo={itemEstaBaixo(item.nome)} /></td>
                           <td className="py-2 text-right">{formatQuantidadeUnidade(item.quantidade, item.unidade)}</td>
                           <td className="py-2 text-right">{formatCurrency(item.valorUnit)}</td>
                           <td className="py-2 text-right">{formatCurrency(item.quantidade * item.valorUnit)}</td>
@@ -3013,8 +3345,8 @@ export default function ChocoGest() {
                     </thead>
                     <tbody>
                       {saldoEmbalagem.map((item) => (
-                        <tr key={`${item.nome}-${item.tipo}`} className="border-b border-amber-800/30">
-                          <td className="py-2">{item.nome}</td>
+                        <tr key={`${item.nome}-${item.tipo}`} className={classeLinhaSaldo(item.nome)}>
+                          <td className="py-2"><NomeComAlerta nome={item.nome} baixo={itemEstaBaixo(item.nome)} /></td>
                           <td className="py-2 text-right">{formatQuantidadeUnidade(item.quantidade, item.unidade)}</td>
                           <td className="py-2 text-right">{formatCurrency(item.valorUnit)}</td>
                           <td className="py-2 text-right">{formatCurrency(item.quantidade * item.valorUnit)}</td>
@@ -5243,6 +5575,9 @@ export default function ChocoGest() {
           )}
         </main>
       </div>
+      {mostrarPopupEstoque && (
+        <PopupEstoqueBaixo itens={itensBaixos} onFechar={fecharAlertaEstoque} />
+      )}
     </div>
   );
 }

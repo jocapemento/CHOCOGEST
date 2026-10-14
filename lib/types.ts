@@ -18,6 +18,15 @@ export interface EstoqueItem {
   data?: string;
 }
 
+/** Quantidade mínima de um item. O alerta abre quando o saldo fica neste valor ou abaixo. */
+export interface AlertaEstoqueMinimo {
+  id: number;
+  nome: string;
+  tipo: TipoItem;
+  unidade: string;
+  minimo: number;
+}
+
 export interface ItemMovimentacao {
   id: number;
   nome: string;
@@ -178,6 +187,7 @@ export interface PrecoGerado {
 
 export interface AppData {
   estoque: EstoqueItem[];
+  alertasEstoque: AlertaEstoqueMinimo[];
   compras: Compra[];
   vendas: Venda[];
   producoes: Producao[];
@@ -214,6 +224,7 @@ export const TIPOS_ITEM_LABEL: Record<TipoItem, string> = {
 
 export const STORAGE_KEYS = {
   estoque: 'chocogest_estoque',
+  alertasEstoque: 'chocogest_alertas_estoque',
   compras: 'chocogest_compras',
   vendas: 'chocogest_vendas',
   producoes: 'chocogest_producoes',
@@ -228,6 +239,7 @@ export const STORAGE_KEYS = {
 
 export const EMPTY_DATA: AppData = {
   estoque: [],
+  alertasEstoque: [],
   compras: [],
   vendas: [],
   producoes: [],
