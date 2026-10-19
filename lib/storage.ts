@@ -25,6 +25,7 @@ import type {
   Venda,
 } from './types';
 import { arredondarQuantidade, normalizeDateISO, todayISO } from './format';
+import { normalizarRecebimentoCompra } from './compras';
 import { normalizarEntregaVenda, normalizarPagoVenda } from './vendas';
 
 function asNumber(value: unknown, fallback = 0): number {
@@ -115,6 +116,7 @@ function normalizeCompras(items: unknown[]): Compra[] {
       cartao: item.cartao ?? null,
       parcelas: asNumber(item.parcelas, 1),
       total: asNumber(item.total),
+      recebimento: normalizarRecebimentoCompra(item.recebimento),
       itens: Array.isArray(item.itens) ? normalizeEstoque(item.itens) : [],
     };
   });

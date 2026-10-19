@@ -12,6 +12,11 @@ import {
   filtrarSaldoProdutosGerados,
 } from './estoque';
 import { listarEmprestimosCartao, saldoDevedorTotal, totalEmprestadoGeral } from './cartoes';
+import {
+  RECEBIMENTO_COMPRA_LABEL,
+  recebimentoDaCompra,
+  resumoComprasAguardandoRecebimento,
+} from './compras';
 import { totalizarProdutosPrecificados } from './precificacao';
 import {
   ENTREGA_VENDA_LABEL,
@@ -148,6 +153,7 @@ export function gerarPdfCompras(data: AppData) {
       ? c.itens.map((i) => `${i.nome} (${formatQuantidadeUnidade(i.quantidade, i.unidade)})`).join(', ')
       : '—',
     c.formaPagamento,
+    RECEBIMENTO_COMPRA_LABEL[recebimentoDaCompra(c)],
     formatCurrency(c.total),
   ]);
 
@@ -155,9 +161,9 @@ export function gerarPdfCompras(data: AppData) {
 
   autoTable(doc, {
     startY: 52,
-    head: [['Data', 'Fornecedor', 'Itens', 'Pagamento', 'Total']],
+    head: [['Data', 'Fornecedor', 'Itens', 'Pagamento', 'Recebimento', 'Total']],
     body: rows,
-    foot: [['', '', '', 'Total', formatCurrency(total)]],
+    foot: [['', '', '', '', 'Total', formatCurrency(total)]],
     theme: 'grid',
     headStyles: { fillColor: [180, 83, 9] },
     footStyles: { fillColor: [254, 243, 199], textColor: [60, 40, 30], fontStyle: 'bold' },
@@ -396,6 +402,7 @@ export function gerarPdfDashboard(data: AppData) {
   const valorEmbalagem = sumBy(saldoEmbalagem, (i) => i.quantidade * i.valorUnit);
   const valorEstoque = valorMateriaPrima + valorProdutosGerados + valorEnergia + valorEmbalagem;
   const totalCompras = sumBy(data.compras, (c) => c.total);
+  const aguardandoRecebimento = resumoComprasAguardandoRecebimento(data.compras);
   const totalVendas = sumBy(data.vendas.filter((v) => isVendaFinalizada(v)), (v) => v.total);
   const saldoCaixa =
     sumBy(data.movimentosCaixa.filter((m) => m.tipo === 'entrada'), (m) => m.valor) -
@@ -432,6 +439,12 @@ export function gerarPdfDashboard(data: AppData) {
       ['Lucro potencial', formatCurrency(resumoPreco.totais.lucroPotencialTotal)],
       ['Valor total operacional', formatCurrency(valorEstoque)],
       ['Total de compras', formatCurrency(totalCompras)],
+      [
+        'Compras aguardando recebimento',
+        aguardandoRecebimento.quantidade > 0
+          ? `${aguardandoRecebimento.quantidade} · ${formatCurrency(aguardandoRecebimento.valorTotal)}`
+          : 'nenhuma',
+      ],
       ['Total de vendas', formatCurrency(totalVendas)],
       ['Saldo em caixa', formatCurrency(saldoCaixa)],
       ['Saldo em banco', formatCurrency(saldoBanco)],

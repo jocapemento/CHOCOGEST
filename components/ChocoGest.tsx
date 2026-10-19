@@ -17,6 +17,7 @@ import type {
   QuitacaoCartao,
   TipoItem,
   EntregaVenda,
+  RecebimentoCompra,
   SituacaoPagoVenda,
   StatusVenda,
   TipoDescontoVenda,
@@ -28,6 +29,17 @@ import {
   avaliarAlertasEstoque,
   type SituacaoEstoqueMinimo,
 } from '@/lib/alerta-estoque';
+import {
+  compraAguardandoRecebimento,
+  compraAposConfirmarRecebimento,
+  compraLancaEstoque,
+  listarComprasAguardandoRecebimento,
+  listarComprasRecebidas,
+  RECEBIMENTO_COMPRA_LABEL,
+  RECEBIMENTO_COMPRA_OPCOES,
+  recebimentoDaCompra,
+  resumoComprasAguardandoRecebimento,
+} from '@/lib/compras';
 import { custoParaReporEstoque } from '@/lib/custo-reposicao';
 import { loadAppData, saveAppData, exportBackup, parseBackupFile } from '@/lib/storage';
 import { DriveBackup } from '@/components/DriveBackup';
@@ -358,8 +370,36 @@ function aplicarMovimentoCompra(
   return { movCaixa: caixa, movBanco: banco };
 }
 
-function reverterEfeitosCompra(prev: AppData, compra: Compra): AppData {
+/** Tira do estoque e do patrimônio só o que a confirmação de recebimento tinha lançado. */
+function reverterLancamentoFisicoCompra(prev: AppData, compra: Compra): AppData {
+  if (!compraLancaEstoque(compra)) return prev;
   const itensEstoque = compra.itens.filter((i) => i.tipo !== 'Equipamento');
+  return {
+    ...prev,
+    estoque: reverterEstoqueCompra(prev.estoque, itensEstoque),
+    patrimonio: removerPatrimonioCompra(prev.patrimonio, compra.id),
+  };
+}
+
+/** Lança estoque e patrimônio quando o recebimento está confirmado. */
+function aplicarLancamentoFisicoCompra(prev: AppData, compra: Compra, dataOperacao: string): AppData {
+  if (!compraLancaEstoque(compra)) return prev;
+  const itensEstoque = compra.itens.filter((i) => i.tipo !== 'Equipamento');
+  const novosPatrimonio = compraItensParaPatrimonio(
+    compra.itens,
+    prev.patrimonio,
+    dataOperacao,
+    compra.fornecedor,
+    compra.id
+  );
+  return {
+    ...prev,
+    estoque: atualizarEstoqueCompra(prev.estoque, itensEstoque, dataOperacao),
+    patrimonio: [...prev.patrimonio, ...novosPatrimonio],
+  };
+}
+
+function reverterEfeitosCompra(prev: AppData, compra: Compra): AppData {
   const { movCaixa, movBanco } = removerMovimentosCompra(
     prev.movimentosCaixa,
     prev.movimentosBanco,
@@ -367,9 +407,7 @@ function reverterEfeitosCompra(prev: AppData, compra: Compra): AppData {
   );
 
   return {
-    ...prev,
-    estoque: reverterEstoqueCompra(prev.estoque, itensEstoque),
-    patrimonio: removerPatrimonioCompra(prev.patrimonio, compra.id),
+    ...reverterLancamentoFisicoCompra(prev, compra),
     movimentosCaixa: movCaixa,
     movimentosBanco: movBanco,
   };
@@ -381,6 +419,7 @@ const COMPRA_FORM_INICIAL = {
   formaPagamento: 'Cartao',
   cartaoId: 1,
   parcelas: 1,
+  recebimento: 'a_receber' as RecebimentoCompra,
   itens: [] as ItemMovimentacao[],
 };
 
@@ -938,6 +977,114 @@ function CelulasEntregaPago({ venda }: { venda: Venda }) {
   );
 }
 
+function TabelaCompras({
+  compras,
+  destaqueId,
+  confirmar,
+  onEditar,
+  onExcluir,
+  onConfirmar,
+}: {
+  compras: Compra[];
+  destaqueId: number | null;
+  confirmar: boolean;
+  onEditar: (compra: Compra) => void;
+  onExcluir: (id: number) => void;
+  onConfirmar: (id: number) => void;
+}) {
+  return (
+    <div className="quadro-fit">
+      <div className="quadro-fit-corpo">
+        <table className="w-full text-sm">
+          <colgroup>
+            <col style={{ width: '11%' }} />
+            <col style={{ width: '15%' }} />
+            <col style={{ width: confirmar ? '20%' : '24%' }} />
+            <col style={{ width: '13%' }} />
+            <col style={{ width: '12%' }} />
+            <col style={{ width: '10%' }} />
+            <col style={{ width: confirmar ? '19%' : '15%' }} />
+          </colgroup>
+          <thead>
+            <tr className="text-amber-300 border-b border-amber-700">
+              <th className="text-left py-2">Data</th>
+              <th className="text-left py-2">Fornecedor</th>
+              <th className="text-left py-2">Itens</th>
+              <th className="text-left py-2">Pagamento</th>
+              <th className="text-left py-2">Recebimento</th>
+              <th className="text-right py-2">Total</th>
+              <th className="text-right py-2">Ações</th>
+            </tr>
+          </thead>
+          <tbody>
+            {compras.map((c) => {
+              const recebimento = recebimentoDaCompra(c);
+              return (
+                <tr
+                  key={c.id}
+                  className={`border-b border-amber-800/30 ${destaqueId === c.id ? 'bg-amber-900/30' : ''}`}
+                >
+                  <td className="py-2 quadro-titulo" data-label="Data">{formatDate(c.data)}</td>
+                  <td className="py-2 font-medium" data-label="Fornecedor">{c.fornecedor}</td>
+                  <td className="py-2 text-amber-200/90 quadro-texto" data-label="Itens">
+                    {c.itens.length > 0 ? (
+                      <div className="space-y-1">
+                        {c.itens.map((i) => (
+                          <div key={i.id}>
+                            {i.nome} — {formatQuantidadeUnidade(i.quantidade, i.unidade)}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      '—'
+                    )}
+                  </td>
+                  <td className="py-2" data-label="Pagamento">
+                    {c.formaPagamento}{c.cartao ? ` (${c.cartao})` : ''}
+                  </td>
+                  <td className="py-2" data-label="Recebimento">
+                    <Selo tone={recebimento === 'recebido' ? 'ok' : 'wait'}>
+                      {RECEBIMENTO_COMPRA_LABEL[recebimento]}
+                    </Selo>
+                  </td>
+                  <td className="py-2 text-right tabular-nums" data-label="Total">{formatCurrency(c.total)}</td>
+                  <td className="py-2 text-right quadro-acoes" data-label="Ações">
+                    <div className="flex flex-wrap justify-end gap-1">
+                      {confirmar && compraAguardandoRecebimento(c) && (
+                        <Btn
+                          variant="primary"
+                          className="!px-2.5 !py-1.5 text-xs whitespace-normal leading-tight"
+                          onClick={() => onConfirmar(c.id)}
+                        >
+                          Confirmar recebimento
+                        </Btn>
+                      )}
+                      <Btn
+                        variant="secondary"
+                        className="!px-2.5 !py-1.5 text-xs whitespace-normal leading-tight"
+                        onClick={() => onEditar(c)}
+                      >
+                        Editar
+                      </Btn>
+                      <Btn
+                        variant="danger"
+                        className="!px-2.5 !py-1.5 text-xs whitespace-normal leading-tight"
+                        onClick={() => onExcluir(c.id)}
+                      >
+                        Excluir
+                      </Btn>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block min-w-0">
@@ -1338,6 +1485,7 @@ export default function ChocoGest() {
       formaPagamento: compra.formaPagamento,
       cartaoId: cartao?.id ?? data.cartoes[0]?.id ?? 1,
       parcelas: compra.parcelas,
+      recebimento: recebimentoDaCompra(compra),
       itens: compra.itens.map((i) => ({ ...i })),
     });
     setCompraEditandoId(compra.id);
@@ -1345,11 +1493,12 @@ export default function ChocoGest() {
   };
 
   const removerCompra = (id: number) => {
-    if (
-      !confirm(
-        'Remover este lançamento de compra? O estoque, patrimônio, quitações do cartão e movimentos financeiros serão ajustados.'
-      )
-    ) {
+    const compraAtual = data.compras.find((c) => c.id === id);
+    const lancouEstoque = compraAtual ? compraLancaEstoque(compraAtual) : true;
+    const aviso = lancouEstoque
+      ? 'Remover este lançamento de compra? O estoque, patrimônio, quitações do cartão e movimentos financeiros serão ajustados.'
+      : 'Remover esta compra ainda não recebida? Os movimentos financeiros e as quitações do cartão serão ajustados. O estoque não foi lançado.';
+    if (!confirm(aviso)) {
       return;
     }
 
@@ -1367,14 +1516,6 @@ export default function ChocoGest() {
   };
 
   const aplicarEfeitosCompra = (prev: AppData, compra: Compra, dataOperacao: string) => {
-    const itensEstoque = compra.itens.filter((i) => i.tipo !== 'Equipamento');
-    const novosPatrimonio = compraItensParaPatrimonio(
-      compra.itens,
-      prev.patrimonio,
-      dataOperacao,
-      compra.fornecedor,
-      compra.id
-    );
     const { movCaixa, movBanco } = aplicarMovimentoCompra(
       prev.movimentosCaixa,
       prev.movimentosBanco,
@@ -1384,13 +1525,11 @@ export default function ChocoGest() {
       prev.bancos[0]?.nome
     );
 
-    return {
-      ...prev,
-      estoque: atualizarEstoqueCompra(prev.estoque, itensEstoque, dataOperacao),
-      patrimonio: [...prev.patrimonio, ...novosPatrimonio],
-      movimentosCaixa: movCaixa,
-      movimentosBanco: movBanco,
-    };
+    return aplicarLancamentoFisicoCompra(
+      { ...prev, movimentosCaixa: movCaixa, movimentosBanco: movBanco },
+      compra,
+      dataOperacao
+    );
   };
 
   const registrarCompra = () => {
@@ -1440,6 +1579,7 @@ export default function ChocoGest() {
       cartao: pagamentoCartao ? (cartao?.nome ?? null) : null,
       parcelas,
       total,
+      recebimento: novaCompra.recebimento,
       itens,
     };
 
@@ -1450,6 +1590,18 @@ export default function ChocoGest() {
           `Não é possível reduzir o total abaixo do já quitado (${formatCurrency(jaQuitado)}). Estorne quitações na aba Cartões.`
         );
       }
+    }
+
+    const antigaEdicao = editando ? data.compras.find((c) => c.id === compraEditandoId) : undefined;
+    if (
+      antigaEdicao &&
+      compraLancaEstoque(antigaEdicao) &&
+      !compraLancaEstoque(compra) &&
+      !confirm(
+        'Esta compra já lançou estoque. Voltar para A receber retira esses itens do estoque. Continuar?'
+      )
+    ) {
+      return;
     }
 
     update((prev) => {
@@ -1474,16 +1626,70 @@ export default function ChocoGest() {
     });
 
     const qtdEquipamento = itens.filter((i) => i.tipo === 'Equipamento').length;
+    const aguardando = !compraLancaEstoque(compra);
 
     resetFormCompra();
+    if (editando) {
+      alert(
+        aguardando
+          ? 'Compra atualizada. O estoque entra quando você confirmar o recebimento.'
+          : 'Compra atualizada com sucesso!'
+      );
+      return;
+    }
+    if (aguardando) {
+      alert(
+        pagamentoCartao
+          ? 'Compra lançada como empréstimo no cartão. O estoque entra quando você confirmar o recebimento.'
+          : 'Compra registrada. O pagamento foi lançado. O estoque entra quando você confirmar o recebimento.'
+      );
+      return;
+    }
     alert(
-      editando
-        ? 'Compra atualizada com sucesso!'
-        : pagamentoCartao
-          ? 'Compra lançada como empréstimo no cartão. Registre a quitação na aba Cartões quando pagar a fatura.'
-          : qtdEquipamento > 0
-            ? `Compra registrada! ${qtdEquipamento} equipamento(s) adicionado(s) ao Patrimônio.`
-            : 'Compra registrada com sucesso!'
+      pagamentoCartao
+        ? 'Compra lançada como empréstimo no cartão e recebida no estoque. Registre a quitação na aba Cartões quando pagar a fatura.'
+        : qtdEquipamento > 0
+          ? `Compra registrada! ${qtdEquipamento} equipamento(s) adicionado(s) ao Patrimônio.`
+          : 'Compra registrada e lançada no estoque.'
+    );
+  };
+
+  const confirmarRecebimentoCompra = (id: number) => {
+    const compra = data.compras.find((c) => c.id === id);
+    if (!compra || !compraAguardandoRecebimento(compra)) return;
+
+    const temEstoque = compra.itens.some((i) => i.tipo !== 'Equipamento');
+    const temEquipamento = compra.itens.some((i) => i.tipo === 'Equipamento');
+    const destino =
+      temEstoque && temEquipamento
+        ? 'Os itens entram no estoque e o equipamento no patrimônio.'
+        : temEquipamento
+          ? 'O equipamento entra no patrimônio.'
+          : 'Os itens entram no estoque.';
+    if (!confirm(`Confirmar recebimento de ${compra.fornecedor}? ${destino}`)) return;
+
+    if (compraEditandoId === id) {
+      setNovaCompra((p) => ({ ...p, recebimento: 'recebido' }));
+    }
+
+    update((prev) => {
+      const atual = prev.compras.find((c) => c.id === id);
+      if (!atual || !compraAguardandoRecebimento(atual)) return prev;
+      const confirmada = compraAposConfirmarRecebimento(atual);
+      return aplicarLancamentoFisicoCompra(
+        {
+          ...prev,
+          compras: prev.compras.map((c) => (c.id === id ? confirmada : c)),
+        },
+        confirmada,
+        confirmada.data
+      );
+    });
+
+    alert(
+      temEquipamento && !temEstoque
+        ? 'Recebimento confirmado. Equipamento lançado no patrimônio.'
+        : 'Recebimento confirmado. Lançamento feito no estoque.'
     );
   };
 
@@ -2546,6 +2752,18 @@ export default function ChocoGest() {
   const resumoPendentes = useMemo(() => resumoVendasPendentes(data.vendas), [data.vendas]);
   const aReceber = useMemo(() => resumoAReceber(data.vendas), [data.vendas]);
   const aEntregar = useMemo(() => resumoAEntregar(data.vendas), [data.vendas]);
+  const aguardandoRecebimento = useMemo(
+    () => resumoComprasAguardandoRecebimento(data.compras),
+    [data.compras]
+  );
+  const comprasAguardando = useMemo(
+    () => listarComprasAguardandoRecebimento(data.compras).slice().reverse(),
+    [data.compras]
+  );
+  const comprasRecebidas = useMemo(
+    () => listarComprasRecebidas(data.compras).slice().reverse(),
+    [data.compras]
+  );
   const reservasPendentes = useMemo(() => produtosReservadosPendentes(data.vendas), [data.vendas]);
   const vendasConcluidas = useMemo(() => listarVendasConcluidas(data.vendas), [data.vendas]);
   const vendaEmEdicao =
@@ -2751,7 +2969,15 @@ export default function ChocoGest() {
                         : 'nenhum em aberto',
                   },
                   { label: 'Patrimônio', value: formatCurrency(valorPatrimonio), icon: '🏛️' },
-                  { label: 'Compras', value: formatCurrency(sumBy(data.compras, (c) => c.total)), icon: '🚚' },
+                  {
+                    label: 'Compras',
+                    value: formatCurrency(sumBy(data.compras, (c) => c.total)),
+                    icon: '🚚',
+                    detalhe:
+                      aguardandoRecebimento.quantidade > 0
+                        ? `${aguardandoRecebimento.quantidade} aguardando recebimento`
+                        : 'nenhuma aguardando recebimento',
+                  },
                   { label: 'Produções', value: data.producoes.length.toString(), icon: '🏭' },
                 ].map((kpi) => (
                   <Card key={kpi.label}>
@@ -3580,6 +3806,24 @@ export default function ChocoGest() {
                       <option>Dinheiro</option><option>Cartao</option><option>Pix</option><option>Transferencia</option>
                     </select>
                   </Field>
+                  <Field label="Recebimento">
+                    <select
+                      className={inputCls}
+                      value={novaCompra.recebimento}
+                      onChange={(e) =>
+                        setNovaCompra((p) => ({
+                          ...p,
+                          recebimento: e.target.value as RecebimentoCompra,
+                        }))
+                      }
+                    >
+                      {RECEBIMENTO_COMPRA_OPCOES.map((opcao) => (
+                        <option key={opcao} value={opcao}>
+                          {RECEBIMENTO_COMPRA_LABEL[opcao]}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
                   {isPagamentoCartao(novaCompra.formaPagamento) && (
                     <>
                       <Field label="Cartão">
@@ -3608,7 +3852,8 @@ export default function ChocoGest() {
                   Itens do tipo <strong>Equipamento</strong> vão para o Patrimônio (não para o Estoque).
                   <strong>Gás de Cozinha</strong> entra como Energia e depois pode ser usado na Produção (custo do lote).
                   <strong>Embalagem</strong> (caixa, rótulo, filme) entra como Embalagem e também entra no custo do lote.
-                  Compra no cartão entra como <strong>empréstimo</strong>; o dinheiro sai na <strong>quitação</strong> (aba Cartões).
+                  Compra no cartão entra como <strong>empréstimo</strong>; o dinheiro sai na <strong>quitação</strong> (aba Cartões).{' '}
+                  <strong>Recebido</strong> lança no estoque ao registrar. <strong>A receber</strong> guarda a compra e o pagamento, e o estoque só entra em <strong>Confirmar recebimento</strong>.
                 </p>
                 <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-3">
                   <input
@@ -3661,54 +3906,54 @@ export default function ChocoGest() {
                   )}
                 </div>
               </Card>
-              <Card>
-                <h4 className="text-amber-200 font-medium mb-4">Histórico de compras</h4>
-                <div className="table-scroll">
-                  <table className="w-full text-sm min-w-[800px]">
-                    <thead>
-                      <tr className="text-amber-300 border-b border-amber-700">
-                        <th className="text-left py-2">Data</th>
-                        <th className="text-left py-2">Fornecedor</th>
-                        <th className="text-left py-2">Itens</th>
-                        <th className="text-left py-2">Pagamento</th>
-                        <th className="text-right py-2">Total</th>
-                        <th className="text-right py-2 w-32">Ações</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {data.compras.slice().reverse().map((c) => (
-                        <tr
-                          key={c.id}
-                          className={`border-b border-amber-800/30 ${compraEditandoId === c.id ? 'bg-amber-900/30' : ''}`}
-                        >
-                          <td className="py-2">{formatDate(c.data)}</td>
-                          <td className="py-2">{c.fornecedor}</td>
-                          <td className="py-2 text-amber-200/90">
-                            {c.itens.length > 0 ? (
-                              <div className="space-y-1">
-                                {c.itens.map((i) => (
-                                  <div key={i.id}>
-                                    {i.nome} — {formatQuantidadeUnidade(i.quantidade, i.unidade)}
-                                  </div>
-                                ))}
-                              </div>
-                            ) : (
-                              '—'
-                            )}
-                          </td>
-                          <td className="py-2">{c.formaPagamento}{c.cartao ? ` (${c.cartao})` : ''}</td>
-                          <td className="py-2 text-right">{formatCurrency(c.total)}</td>
-                          <td className="py-2 text-right whitespace-nowrap">
-                            <Btn variant="secondary" onClick={() => editarCompra(c)}>Editar</Btn>
-                            {' '}
-                            <Btn variant="danger" onClick={() => removerCompra(c.id)}>Excluir</Btn>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+              <Card className="mb-6 border border-amber-600/40">
+                <h4 className="text-amber-200 font-medium mb-1">Aguardando recebimento</h4>
+                <p className="text-amber-400/70 text-xs mb-4">
+                  Compras em <strong>A receber</strong>. O pagamento pode já estar lançado.
+                  O estoque e o patrimônio entram ao <strong>Confirmar recebimento</strong>.
+                </p>
+                <div className="grid grid-cols-2 gap-3 mb-5">
+                  <div className="bg-[#2c2118] rounded-xl p-3">
+                    <div className="text-amber-400/70 text-xs">Compras</div>
+                    <div className="text-xl font-bold text-amber-100">{aguardandoRecebimento.quantidade}</div>
+                  </div>
+                  <div className="bg-[#2c2118] rounded-xl p-3">
+                    <div className="text-amber-400/70 text-xs">Valor</div>
+                    <div className="text-xl font-bold text-amber-100">
+                      {formatCurrency(aguardandoRecebimento.valorTotal)}
+                    </div>
+                  </div>
                 </div>
-                {data.compras.length === 0 && <p className="text-amber-400/60 py-4">Nenhuma compra registrada.</p>}
+                {comprasAguardando.length > 0 ? (
+                  <TabelaCompras
+                    compras={comprasAguardando}
+                    destaqueId={compraEditandoId}
+                    confirmar
+                    onEditar={editarCompra}
+                    onExcluir={removerCompra}
+                    onConfirmar={confirmarRecebimentoCompra}
+                  />
+                ) : (
+                  <p className="text-amber-400/60 py-2">Nenhuma compra aguardando recebimento.</p>
+                )}
+              </Card>
+              <Card>
+                <h4 className="text-amber-200 font-medium mb-1">Histórico de compras recebidas</h4>
+                <p className="text-amber-400/70 text-xs mb-4">
+                  Recebimento confirmado. Os itens já entraram no estoque ou no patrimônio.
+                </p>
+                {comprasRecebidas.length > 0 ? (
+                  <TabelaCompras
+                    compras={comprasRecebidas}
+                    destaqueId={compraEditandoId}
+                    confirmar={false}
+                    onEditar={editarCompra}
+                    onExcluir={removerCompra}
+                    onConfirmar={confirmarRecebimentoCompra}
+                  />
+                ) : (
+                  <p className="text-amber-400/60 py-2">Nenhuma compra recebida.</p>
+                )}
               </Card>
             </div>
           )}

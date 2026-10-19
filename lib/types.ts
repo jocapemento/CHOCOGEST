@@ -36,6 +36,9 @@ export interface ItemMovimentacao {
   valorUnit: number;
 }
 
+/** Se a mercadoria já entrou no estoque. */
+export type RecebimentoCompra = 'a_receber' | 'recebido';
+
 export interface Compra {
   id: number;
   data: string;
@@ -45,6 +48,11 @@ export interface Compra {
   parcelas: number;
   total: number;
   itens: ItemMovimentacao[];
+  /**
+   * A receber registra a compra sem lançar estoque.
+   * Ausente em compras antigas: já tinham entrado no estoque (recebido).
+   */
+  recebimento?: RecebimentoCompra;
 }
 
 export type StatusVenda = 'em_processamento' | 'concluida';
