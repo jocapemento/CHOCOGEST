@@ -72,6 +72,7 @@ import {
   tipoCadeiaFixo,
   tipoEstoqueCadeia,
 } from '@/lib/cadeia-producao';
+import { divergenciaPercentualProduto, sugestoesNomeProduto } from '@/lib/nome-produto';
 import {
   agruparEstoque,
   alocarCustoEntreProdutos,
@@ -148,6 +149,7 @@ import {
   validarEstoqueVenda,
   validarReservaVendaPendente,
   valorDescontoAplicado,
+  vendaBaixaEstoque,
   vendaTemDesconto,
   vendaTemPendenciaConfirmacao,
 } from '@/lib/vendas';
@@ -502,11 +504,10 @@ function recebimentoJaLancado(prev: AppData, vendaId: number): boolean {
 function mensagemVendaRegistrada(venda: Venda): string {
   if (isVendaFinalizada(venda)) return 'Venda concluída e registrada!';
   const paga = isVendaPaga(venda);
-  const detalhe = paga
-    ? 'estoque reservado; recebimento lançado'
-    : 'estoque reservado, sem baixa financeira';
+  const estoqueTxt = vendaBaixaEstoque(venda) ? 'estoque baixado' : 'estoque reservado';
+  const dinheiroTxt = paga ? 'recebimento lançado' : 'sem baixa financeira';
   const motivo = motivoImpedeConclusao(venda);
-  return `Venda pendente registrada (${detalhe}).${motivo ? ` ${motivo}` : ''} A venda permanece na Relação de vendas pendentes.`;
+  return `Venda pendente registrada (${estoqueTxt}; ${dinheiroTxt}).${motivo ? ` ${motivo}` : ''} A venda permanece na Relação de vendas pendentes.`;
 }
 
 /** Inclui o recebimento se está Pago e ainda não há lançamento. Não mexe no estoque. */
@@ -525,32 +526,34 @@ function lancarRecebimentoVenda(prev: AppData, venda: Venda, dataOperacao: strin
 
 /** Repõe estoque só se a venda tinha baixado; tira o recebimento se tinha lançado. */
 function reverterEfeitosVenda(prev: AppData, venda: Venda): AppData {
-  const semEstoque = isVendaConcluida(venda)
-    ? {
-        ...prev,
-        estoque: atualizarEstoqueCompra(
-          prev.estoque,
-          venda.itens.map((item) => ({
-            ...item,
-            valorUnit: custoParaReporEstoque(item, prev),
-          }))
-        ),
-      }
-    : prev;
+  const semEstoque =
+    venda.estoqueBaixado === true
+      ? {
+          ...prev,
+          estoque: atualizarEstoqueCompra(
+            prev.estoque,
+            venda.itens.map((item) => ({
+              ...item,
+              valorUnit: custoParaReporEstoque(item, prev),
+            }))
+          ),
+        }
+      : prev;
   return removerRecebimentoVenda(semEstoque, venda.id);
 }
 
-/** Atualiza a venda; baixa estoque só na passagem para concluída. */
+/** Atualiza a venda. Baixa o estoque quando o produto passa a ter saído (Retirada ou Entregue). */
 function aplicarAtualizacaoVenda(prev: AppData, atual: Venda, atualizada: Venda): AppData {
+  const jaBaixou = atual.estoqueBaixado === true;
+  const deveBaixar = vendaBaixaEstoque(atualizada);
+  const vendaSalva: Venda = { ...atualizada, estoqueBaixado: jaBaixou || deveBaixar };
   const state: AppData = {
     ...prev,
-    vendas: prev.vendas.map((v) => (v.id === atual.id ? atualizada : v)),
+    vendas: prev.vendas.map((v) => (v.id === atual.id ? vendaSalva : v)),
+    estoque:
+      deveBaixar && !jaBaixou ? baixarEstoqueFifo(prev.estoque, atualizada.itens) : prev.estoque,
   };
-  const passouAConcluida = !isVendaConcluida(atual) && isVendaConcluida(atualizada);
-  const comEstoque = passouAConcluida
-    ? { ...state, estoque: baixarEstoqueFifo(state.estoque, atualizada.itens) }
-    : state;
-  return lancarRecebimentoVenda(comEstoque, atualizada, atualizada.data);
+  return lancarRecebimentoVenda(state, vendaSalva, vendaSalva.data);
 }
 
 function vendaAposConfirmarEntrega(venda: Venda): Venda {
@@ -565,11 +568,17 @@ function vendaAposReceber(venda: Venda): Venda {
   return { ...paga, status: 'concluida' };
 }
 
-/** Baixa estoque na concluída e lança recebimento só quando está Pago. */
+/** Baixa estoque na Retirada ou Entregue e lança recebimento só quando está Pago. */
 function aplicarEfeitosVenda(prev: AppData, venda: Venda, dataOperacao: string): AppData {
-  const comEstoque = isVendaConcluida(venda)
-    ? { ...prev, estoque: baixarEstoqueFifo(prev.estoque, venda.itens) }
-    : prev;
+  const deveBaixar = vendaBaixaEstoque(venda);
+  const vendaSalva: Venda = { ...venda, estoqueBaixado: deveBaixar };
+  const comVenda: AppData = {
+    ...prev,
+    vendas: prev.vendas.map((v) => (v.id === venda.id ? vendaSalva : v)),
+  };
+  const comEstoque = deveBaixar
+    ? { ...comVenda, estoque: baixarEstoqueFifo(comVenda.estoque, venda.itens) }
+    : comVenda;
   const semRecebimento = removerRecebimentoVenda(comEstoque, venda.id);
   if (!isVendaPaga(venda)) return semRecebimento;
   const { movCaixa, movBanco } = aplicarMovimentoVenda(
@@ -1142,6 +1151,7 @@ export default function ChocoGest() {
   });
   const [novaProducao, setNovaProducao] = useState({ ...PRODUCAO_FORM_INICIAL });
   const [producaoEditandoId, setProducaoEditandoId] = useState<number | null>(null);
+  const [produtoSaidaFoco, setProdutoSaidaFoco] = useState<number | null>(null);
   const [ingredienteForm, setIngredienteForm] = useState({ nome: '', quantidade: 0, valorUnit: 0 });
   const [novoCartao, setNovoCartao] = useState({ nome: '', limite: 0 });
   const [cotacaoDolar, setCotacaoDolar] = useState(0);
@@ -1828,13 +1838,10 @@ export default function ChocoGest() {
     };
 
     let estoqueBase = data.estoque;
-    if (editando) {
-      const antiga = data.vendas.find((v) => v.id === vendaEditandoId);
-      if (antiga && isVendaConcluida(antiga)) {
-        estoqueBase = reverterEfeitosVenda(data, antiga).estoque;
-      }
+    if (antiga?.estoqueBaixado) {
+      estoqueBase = reverterEfeitosVenda(data, antiga).estoque;
     }
-    if (isVendaConcluida(venda)) {
+    if (vendaBaixaEstoque(venda)) {
       const erro = validarEstoqueVenda(estoqueBase, venda);
       if (erro) return alert(erro);
     } else {
@@ -1884,10 +1891,19 @@ export default function ChocoGest() {
     }
 
     const vendaConcluida: Venda = { ...venda, status: 'concluida' };
-    const erro = validarEstoqueVenda(data.estoque, vendaConcluida);
-    if (erro) return alert(erro);
+    const vaiBaixar = vendaBaixaEstoque(vendaConcluida) && venda.estoqueBaixado !== true;
+    if (vaiBaixar) {
+      const erro = validarEstoqueVenda(data.estoque, vendaConcluida);
+      if (erro) return alert(erro);
+    }
 
-    if (!confirm(`Concluir venda para ${venda.cliente}? O estoque será baixado.`)) {
+    if (
+      !confirm(
+        vaiBaixar
+          ? `Concluir venda para ${venda.cliente}? O estoque será baixado.`
+          : `Concluir venda para ${venda.cliente}?`
+      )
+    ) {
       return;
     }
 
@@ -1904,13 +1920,16 @@ export default function ChocoGest() {
 
     const pagaPrevista = vendaAposReceber(venda);
     const vaiConcluir = !isVendaConcluida(venda) && isVendaConcluida(pagaPrevista);
-    if (vaiConcluir) {
+    const vaiBaixar = vendaBaixaEstoque(pagaPrevista) && venda.estoqueBaixado !== true;
+    if (vaiBaixar) {
       const erro = validarEstoqueVenda(data.estoque, pagaPrevista);
       if (erro) return alert(erro);
     }
 
     const confirmMsg = vaiConcluir
-      ? `Lançar recebimento de ${formatCurrency(venda.total)} (${venda.formaPagamento}) de ${venda.cliente}? A venda será concluída e o estoque será baixado.`
+      ? vaiBaixar
+        ? `Lançar recebimento de ${formatCurrency(venda.total)} (${venda.formaPagamento}) de ${venda.cliente}? A venda será concluída e o estoque será baixado.`
+        : `Lançar recebimento de ${formatCurrency(venda.total)} (${venda.formaPagamento}) de ${venda.cliente}? A venda será concluída.`
       : `Lançar recebimento de ${formatCurrency(venda.total)} (${venda.formaPagamento}) de ${venda.cliente}?`;
     if (!confirm(confirmMsg)) return;
 
@@ -1941,16 +1960,17 @@ export default function ChocoGest() {
 
     const confirmadaPrevista = vendaAposConfirmarEntrega(venda);
     const vaiConcluir = !isVendaConcluida(venda) && isVendaConcluida(confirmadaPrevista);
-    if (vaiConcluir) {
+    const vaiBaixar = vendaBaixaEstoque(confirmadaPrevista) && venda.estoqueBaixado !== true;
+    if (vaiBaixar) {
       const erro = validarEstoqueVenda(data.estoque, confirmadaPrevista);
       if (erro) return alert(erro);
     }
 
-    const msg = vaiConcluir
-      ? `Confirmar entrega para ${venda.cliente}? A venda será concluída e o estoque será baixado.`
-      : !isVendaPaga(venda)
-        ? `Confirmar entrega para ${venda.cliente}? A venda permanece pendente até o recebimento do pagamento.`
-        : `Confirmar entrega para ${venda.cliente}?`;
+    const msg = vaiBaixar
+      ? vaiConcluir
+        ? `Confirmar entrega para ${venda.cliente}? A venda será concluída e o estoque será baixado.`
+        : `Confirmar entrega para ${venda.cliente}? O estoque será baixado. A venda permanece pendente até o recebimento do pagamento.`
+      : `Confirmar entrega para ${venda.cliente}?`;
     if (!confirm(msg)) return;
 
     if (vendaEditandoId === id) {
@@ -1968,9 +1988,9 @@ export default function ChocoGest() {
     });
     alert(
       vaiConcluir
-        ? 'Entrega confirmada. Venda concluída.'
-        : !isVendaPaga(venda)
-          ? 'Entrega confirmada. A venda permanece pendente até o recebimento do pagamento.'
+        ? 'Entrega confirmada. Venda concluída e estoque baixado.'
+        : vaiBaixar
+          ? 'Entrega confirmada. Estoque baixado. A venda permanece pendente até o recebimento do pagamento.'
           : 'Entrega confirmada.'
     );
   };
@@ -2060,6 +2080,7 @@ export default function ChocoGest() {
     setNovaProducao({ ...PRODUCAO_FORM_INICIAL, data: todayISO() });
     setIngredienteForm({ nome: '', quantidade: 0, valorUnit: 0 });
     setProducaoEditandoId(null);
+    setProdutoSaidaFoco(null);
   };
 
   const cancelarEdicaoProducao = () => {
@@ -2175,6 +2196,18 @@ export default function ChocoGest() {
         return alert(`O produto "${p.nome}" está duplicado neste lote.`);
       }
       nomesSaida.add(key);
+    }
+
+    const nomesIngredientesMassa = ingredientesMassaProducao(novaProducao.ingredientes).map(
+      (ing) => ing.nome
+    );
+    for (const produto of produtosMassa) {
+      const aviso = divergenciaPercentualProduto(produto.nome, nomesIngredientesMassa);
+      if (!aviso) continue;
+      const seguir = confirm(
+        `O ingrediente é "${aviso.ingrediente}" (${aviso.percentualIngrediente}%). O produto gerado está como "${produto.nome}" (${aviso.percentualProduto}%). Registrar mesmo assim?`
+      );
+      if (!seguir) return;
     }
 
     const editando = producaoEditandoId !== null;
@@ -4130,7 +4163,8 @@ export default function ChocoGest() {
                 <p className="text-amber-400/70 text-xs mb-3">
                   <strong>Concluída</strong> só vale com entrega confirmada (Retirada ou Entregue) e pagamento <strong>Pago</strong>.{' '}
                   Se falta confirmar a entrega ou o recebimento, a venda fica na Relação de vendas pendentes.{' '}
-                  <strong>Pendente</strong> reserva o produto e não baixa o estoque. O estoque baixa ao concluir.{' '}
+                  <strong>A entregar</strong> reserva o produto e não baixa o estoque. <strong>Retirada</strong> e{' '}
+                  <strong>Entregue</strong> baixam o estoque na hora, mesmo com o pagamento em aberto.{' '}
                   <strong>Pago</strong> lança o recebimento no Caixa (Dinheiro) ou no Banco.
                 </p>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
@@ -4259,7 +4293,7 @@ export default function ChocoGest() {
               <Card className="mb-6">
                 <h4 className="text-amber-200 font-medium mb-1">A entregar</h4>
                 <p className="text-amber-400/70 text-xs mb-3">
-                  Vendas em <strong>A entregar</strong>. Use <strong>Confirmar entrega</strong> quando o pedido chegar ao cliente.
+                  Vendas em <strong>A entregar</strong>. Use <strong>Confirmar entrega</strong> quando o pedido chegar ao cliente: o produto sai do estoque nesse momento.
                 </p>
                 <div className="grid grid-cols-2 gap-3">
                   <div className="bg-[#2c2118] rounded-xl p-3">
@@ -4293,7 +4327,7 @@ export default function ChocoGest() {
                 <h4 className="text-amber-200 font-medium mb-1">Relação de vendas pendentes</h4>
                 <p className="text-amber-400/70 text-xs mb-4">
                   Vendas que ainda não estão concluídas: falta confirmar a entrega ou o recebimento.
-                  Enquanto o status for <strong>Pendente</strong>, o produto fica reservado. O estoque baixa ao concluir.
+                  Enquanto estiver <strong>A entregar</strong>, o produto fica reservado. Na <strong>Retirada</strong> ou ao confirmar a entrega, o estoque é baixado, mesmo com o pagamento em aberto.
                 </p>
 
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
@@ -4423,6 +4457,9 @@ export default function ChocoGest() {
                                   desc. {formatarDescontoVenda(v)}
                                 </div>
                               )}
+                              {v.estoqueBaixado && (
+                                <div className="text-xs font-normal text-amber-400/70">estoque baixado</div>
+                              )}
                             </td>
                             <td className="py-2 text-right quadro-acoes" data-label="Ações">
                               <div className="flex flex-wrap justify-end gap-1">
@@ -4476,7 +4513,7 @@ export default function ChocoGest() {
               <Card className="mb-6">
                 <h4 className="text-amber-200 font-medium mb-1">Histórico de vendas concluídas</h4>
                 <p className="text-amber-400/70 text-xs mb-4">
-                  Vendas com entrega confirmada e pagamento recebido. O estoque já foi baixado.
+                  Vendas com entrega confirmada e pagamento recebido. O estoque já foi baixado na entrega.
                 </p>
                 <div className="quadro-fit">
                   <div className="quadro-fit-corpo">
@@ -4893,23 +4930,60 @@ export default function ChocoGest() {
                 )}
                 <div className="space-y-3 mb-4">
                   {novaProducao.produtos.map((prod, idx) => {
+                    const nomesIngredientesMassa = ingredientesMassaProducao(
+                      novaProducao.ingredientes
+                    ).map((ing) => ing.nome);
+                    const sugestoesProduto = sugestoesNomeProduto(
+                      catalogoProdutosProducao,
+                      nomesIngredientesMassa,
+                      prod.nome
+                    );
+                    const avisoPercentual = divergenciaPercentualProduto(
+                      prod.nome,
+                      nomesIngredientesMassa
+                    );
                     return (
                     <div key={idx} className="rounded-xl border border-amber-800/40 p-3 space-y-3">
                       <div className="grid grid-cols-1 sm:grid-cols-7 gap-3 items-end">
-                        <div className="sm:col-span-3">
+                        <div className="sm:col-span-3 relative">
                           <Field label={idx === 0 ? 'Produto' : `Produto ${idx + 1}`}>
                             <input
-                              list="catalogo-produtos-producao"
+                              data-produto-saida
                               className={inputCls}
                               value={prod.nome}
+                              autoComplete="off"
+                              onFocus={() => setProdutoSaidaFoco(idx)}
+                              onBlur={() =>
+                                setProdutoSaidaFoco((atual) => (atual === idx ? null : atual))
+                              }
                               onChange={(e) => {
                                 const nome = e.target.value;
                                 const sugestao = sugestaoProdutoSaida(data.producoes, nome);
                                 atualizarProdutoSaida(idx, { nome, ...sugestao });
                               }}
-                              placeholder="Selecione ou digite um produto"
+                              placeholder="Digite ou escolha um produto"
                             />
                           </Field>
+                          {produtoSaidaFoco === idx && sugestoesProduto.length > 0 && (
+                            <ul className="absolute z-20 mt-1 max-h-60 w-full overflow-auto rounded-xl border border-amber-700/60 bg-[#2c2118] shadow-lg">
+                              {sugestoesProduto.map((nome) => (
+                                <li key={nome}>
+                                  <button
+                                    type="button"
+                                    className="w-full min-h-[44px] px-3 py-2.5 text-left text-sm text-amber-100 hover:bg-amber-800/60"
+                                    onPointerDown={(e) => {
+                                      e.preventDefault();
+                                      const sugestao = sugestaoProdutoSaida(data.producoes, nome);
+                                      atualizarProdutoSaida(idx, { nome, ...sugestao });
+                                      setProdutoSaidaFoco(null);
+                                    }}
+                                  >
+                                    {nome}
+                                  </button>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
                         </div>
                         <div className="sm:col-span-2">
                           <Field label={prod.fracionar ? 'Quantidade (un)' : 'Quantidade'}>
@@ -4955,6 +5029,11 @@ export default function ChocoGest() {
                           </Btn>
                         </div>
                       </div>
+                      {avisoPercentual && (
+                        <p className="text-xs text-amber-300">
+                          Este nome está com {avisoPercentual.percentualProduto}%. O ingrediente lançado é {avisoPercentual.percentualIngrediente}% ({avisoPercentual.ingrediente}).
+                        </p>
+                      )}
                       <label className="flex items-start gap-2 text-sm text-amber-200 cursor-pointer">
                         <input
                           type="checkbox"
@@ -4987,11 +5066,6 @@ export default function ChocoGest() {
                     </div>
                     );
                   })}
-                  <datalist id="catalogo-produtos-producao">
-                    {catalogoProdutosProducao.map((nome) => (
-                      <option key={nome} value={nome} />
-                    ))}
-                  </datalist>
                   <Btn variant="secondary" onClick={adicionarProdutoSaida}>
                     + Produto gerado
                   </Btn>

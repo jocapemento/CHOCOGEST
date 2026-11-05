@@ -118,9 +118,12 @@ export function entregaAguardandoConfirmacao(venda: Pick<Venda, 'entrega' | 'sta
   return entregaDaVenda(venda) === 'a_entregar';
 }
 
-/** Estoque baixa só na venda concluída. Recebimento segue `pago`, à parte. */
-export function vendaBaixaEstoque(venda: Pick<Venda, 'status'>): boolean {
-  return isVendaConcluida(venda);
+/**
+ * Estoque baixa quando o produto sai: Retirada ou Entregue.
+ * A entregar só reserva. O recebimento segue `pago`, à parte.
+ */
+export function vendaBaixaEstoque(venda: Pick<Venda, 'entrega' | 'status'>): boolean {
+  return !entregaAguardandoConfirmacao(venda);
 }
 
 export function vendaLancaRecebimento(venda: Pick<Venda, 'pago' | 'status'>): boolean {
@@ -133,9 +136,9 @@ export function isVendaPendente(
   return !isVendaFinalizada(venda);
 }
 
-/** Reserva saldo livre só enquanto o status ainda não baixou o estoque. */
-export function vendaReservaEstoque(venda: Pick<Venda, 'status'>): boolean {
-  return !isVendaConcluida(venda);
+/** Reserva saldo livre só enquanto o produto ainda não saiu (A entregar). */
+export function vendaReservaEstoque(venda: Pick<Venda, 'entrega' | 'status'>): boolean {
+  return !vendaBaixaEstoque(venda);
 }
 
 export function formatarItensVenda(itens: ItemMovimentacao[]): string {
@@ -287,7 +290,7 @@ export interface ProdutoReservadoPendente {
 }
 
 /**
- * Quantidade reservada por vendas pendentes (não baixam estoque ainda).
+ * Quantidade reservada por vendas em A entregar (ainda não baixaram o estoque).
  * `ignorarVendaId` exclui a venda em edição para não reservar em dobro.
  */
 export function quantidadeReservadaProduto(

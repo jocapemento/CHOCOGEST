@@ -1,9 +1,11 @@
 import { normalizeAlertasEstoque } from './alerta-estoque';
 import { tipoEstoqueCadeia } from './cadeia-producao';
 import { vincularCartaoNasCompras } from './cartoes';
+import { corrigirNomeTrocadoDosLotes } from './corrigir-nome-producao';
 import { corrigirCustosDevolvidosComoPreco } from './custo-reposicao';
 import {
   alocarCustoEntreProdutos,
+  baixarEstoqueFifo,
   calcularPerdaProducao,
   espelharCamposLegadoProducao,
   produtosDaProducao,
@@ -26,7 +28,7 @@ import type {
 } from './types';
 import { arredondarQuantidade, normalizeDateISO, todayISO } from './format';
 import { normalizarRecebimentoCompra } from './compras';
-import { normalizarEntregaVenda, normalizarPagoVenda } from './vendas';
+import { normalizarEntregaVenda, normalizarPagoVenda, vendaBaixaEstoque } from './vendas';
 
 function asNumber(value: unknown, fallback = 0): number {
   const n = Number(value);
@@ -131,6 +133,10 @@ function normalizeVendas(items: unknown[]): Venda[] {
         : undefined;
     const desconto = descontoTipo ? Math.max(0, asNumber(item.desconto)) : 0;
     const status = item.status === 'em_processamento' ? 'em_processamento' : 'concluida';
+    const estoqueBaixado =
+      item.estoqueBaixado === true || item.estoqueBaixado === false
+        ? item.estoqueBaixado
+        : status === 'concluida';
     return {
       id: item.id ?? idx + 1,
       data: normalizeDateISO(item.data, todayISO()),
@@ -139,6 +145,7 @@ function normalizeVendas(items: unknown[]): Venda[] {
       status,
       entrega: normalizarEntregaVenda(item.entrega, status),
       pago: normalizarPagoVenda(item.pago, status),
+      estoqueBaixado,
       total: asNumber(item.total),
       ...(descontoTipo && desconto > 0 ? { descontoTipo, desconto } : {}),
       itens: Array.isArray(item.itens) ? normalizeEstoque(item.itens) : [],
@@ -266,22 +273,43 @@ function normalizePrecosGerados(items: unknown[]): PrecoGerado[] {
   });
 }
 
+/**
+ * Venda já marcada como Retirada ou Entregue, mas gravada antes da baixa na entrega.
+ * Tira o produto do estoque uma vez e marca `estoqueBaixado` para não repetir.
+ */
+function baixarEstoqueDeVendasEntregues(data: AppData): AppData {
+  let estoque = data.estoque;
+  let mudou = false;
+  const vendas = data.vendas.map((venda) => {
+    if (!vendaBaixaEstoque(venda) || venda.estoqueBaixado) return venda;
+    estoque = baixarEstoqueFifo(estoque, venda.itens);
+    mudou = true;
+    return { ...venda, estoqueBaixado: true };
+  });
+  if (!mudou) return data;
+  return { ...data, estoque, vendas };
+}
+
 export function normalizeAppData(data: AppData): AppData {
   const cartoes = normalizeCartoes(data.cartoes);
-  return corrigirCustosDevolvidosComoPreco({
-    estoque: normalizeEstoque(data.estoque),
-    alertasEstoque: normalizeAlertasEstoque(data.alertasEstoque),
-    compras: vincularCartaoNasCompras(normalizeCompras(data.compras), cartoes),
-    vendas: normalizeVendas(data.vendas),
-    producoes: normalizeProducoes(data.producoes),
-    cartoes,
-    bancos: normalizeBancos(data.bancos),
-    patrimonio: normalizePatrimonio(data.patrimonio),
-    movimentosCaixa: normalizeMovimentos(data.movimentosCaixa),
-    movimentosBanco: normalizeMovimentos(data.movimentosBanco),
-    precosGerados: normalizePrecosGerados(data.precosGerados ?? []),
-    quitacoesCartao: normalizeQuitacoesCartao(data.quitacoesCartao ?? []),
-  });
+  return baixarEstoqueDeVendasEntregues(
+    corrigirCustosDevolvidosComoPreco(
+      corrigirNomeTrocadoDosLotes({
+        estoque: normalizeEstoque(data.estoque),
+        alertasEstoque: normalizeAlertasEstoque(data.alertasEstoque),
+        compras: vincularCartaoNasCompras(normalizeCompras(data.compras), cartoes),
+        vendas: normalizeVendas(data.vendas),
+        producoes: normalizeProducoes(data.producoes),
+        cartoes,
+        bancos: normalizeBancos(data.bancos),
+        patrimonio: normalizePatrimonio(data.patrimonio),
+        movimentosCaixa: normalizeMovimentos(data.movimentosCaixa),
+        movimentosBanco: normalizeMovimentos(data.movimentosBanco),
+        precosGerados: normalizePrecosGerados(data.precosGerados ?? []),
+        quitacoesCartao: normalizeQuitacoesCartao(data.quitacoesCartao ?? []),
+      })
+    )
+  );
 }
 
 export function loadAppData(): AppData {

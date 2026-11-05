@@ -76,6 +76,11 @@ export interface Venda {
   entrega?: EntregaVenda;
   /** Pago lança recebimento; a receber fica em aberto. */
   pago?: SituacaoPagoVenda;
+  /**
+   * true quando os itens desta venda já saíram do estoque.
+   * Ausente em vendas antigas: só as concluídas tinham baixado.
+   */
+  estoqueBaixado?: boolean;
   /** Total líquido (subtotal − desconto). */
   total: number;
   /** Ausente ou indefinido = sem desconto. */

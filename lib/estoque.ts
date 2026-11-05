@@ -111,12 +111,19 @@ export function baixarEstoqueFifo(
   return updated.filter((e) => e.quantidade > 0);
 }
 
+/** Venda que já tirou o produto do estoque. Sem o campo, vale a regra antiga: só a concluída. */
+function vendaConsumiuEstoque(venda: Venda): boolean {
+  if (venda.estoqueBaixado === true) return true;
+  if (venda.estoqueBaixado === false) return false;
+  return (venda.status ?? 'concluida') === 'concluida';
+}
+
 export function vendasDoProduto(vendas: Venda[], produto: string): VendaComProduto[] {
   const key = produto.toLowerCase();
   const result: VendaComProduto[] = [];
 
   for (const venda of vendas) {
-    if ((venda.status ?? 'concluida') !== 'concluida') continue;
+    if (!vendaConsumiuEstoque(venda)) continue;
     const quantidade = venda.itens
       .filter((i) => i.nome.toLowerCase() === key)
       .reduce((acc, i) => acc + i.quantidade, 0);
