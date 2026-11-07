@@ -1,8 +1,8 @@
-/** Quebra de Amêndoa Torrada sugere Nibs e Casca, mas um produto gerado já basta. */
+/** Quebra de Amêndoa Torrada sugere Nibs e Chá de Cacau, mas um produto gerado já basta. */
 
 const COPRODUTOS_POR_INGREDIENTE = {
-  'amêndoa torrada': ['Nibs', 'Casca'],
-  'amendoa torrada': ['Nibs', 'Casca'],
+  'amêndoa torrada': ['Nibs', 'Chá de Cacau'],
+  'amendoa torrada': ['Nibs', 'Chá de Cacau'],
 };
 
 function coprodutosSugeridosParaIngredientes(nomesIngredientes) {
@@ -52,7 +52,7 @@ function assert(cond, msg) {
 
 const sugeridos = coprodutosSugeridosParaIngredientes(['Amêndoa Torrada']);
 assert(sugeridos.length === 2, 'Amêndoa Torrada sugere 2 produtos');
-assert(sugeridos.includes('Nibs') && sugeridos.includes('Casca'), 'coprodutos são Nibs e Casca');
+assert(sugeridos.includes('Nibs') && sugeridos.includes('Chá de Cacau'), 'coprodutos são Nibs e Chá de Cacau');
 
 const preenchido = preencherProdutosComCoprodutos(
   [{ nome: '', quantidade: 0, unidade: 'kg' }],
@@ -71,7 +71,7 @@ const duasLinhas = preencherProdutosComCoprodutos(
   'kg'
 );
 assert(duasLinhas.length === 2, 'respeita as duas linhas que o usuário abriu');
-assert(duasLinhas[0].nome === 'Nibs' && duasLinhas[1].nome === 'Casca', 'preenche Nibs e Casca nas linhas vazias');
+assert(duasLinhas[0].nome === 'Nibs' && duasLinhas[1].nome === 'Chá de Cacau', 'preenche Nibs e Chá de Cacau nas linhas vazias');
 
 const comNibs = preencherProdutosComCoprodutos(
   [{ nome: 'Nibs', quantidade: 10, unidade: 'kg' }],
@@ -80,7 +80,7 @@ const comNibs = preencherProdutosComCoprodutos(
 );
 assert(comNibs.length === 1, 'não força um segundo produto');
 assert(comNibs.find((p) => p.nome === 'Nibs')?.quantidade === 10, 'mantém quantidade já digitada de Nibs');
-assert(!comNibs.some((p) => p.nome === 'Casca'), 'não completa Casca automaticamente');
+assert(!comNibs.some((p) => p.nome === 'Chá de Cacau'), 'não completa Chá de Cacau automaticamente');
 
 const outro = preencherProdutosComCoprodutos(
   [{ nome: 'Chocolate 100%', quantidade: 2, unidade: 'kg' }],
@@ -97,7 +97,7 @@ const perda = calcularPerda(
   ]
 );
 assert(perda.saida === 9.3, 'saída é a soma dos produtos');
-assert(perda.perda === 0.7, 'perda = entrada − Nibs − Casca');
+assert(perda.perda === 0.7, 'perda = entrada − Nibs − Chá de Cacau');
 assert(perda.percentual === 7, 'percentual de perda');
 
 if (fails.length) {
@@ -105,4 +105,4 @@ if (fails.length) {
   process.exit(1);
 }
 
-console.log('✓ Quebra de Amêndoa Torrada sugere Nibs + Casca, com um produto gerado opcional');
+console.log('✓ Quebra de Amêndoa Torrada sugere Nibs + Chá de Cacau, com um produto gerado opcional');

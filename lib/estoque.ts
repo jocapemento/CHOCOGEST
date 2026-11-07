@@ -2,6 +2,7 @@ import {
   ehInsumoEmbalagem,
   ehInsumoEnergia,
   ehMateriaPrimaCadeia,
+  produtoMantemCustoSemPerda,
   tipoEstoqueCadeia,
 } from '@/lib/cadeia-producao';
 import { arredondarQuantidade, formatQuantidadeUnidade } from '@/lib/format';
@@ -272,6 +273,15 @@ export function custoMassaProducao(ingredientes: Producao['ingredientes']): numb
   return custoItensProducao(ingredientesMassaProducao(ingredientes));
 }
 
+/** Custo por kg (ou outra unidade) da matéria-prima, sem gás, embalagem ou perda. */
+export function custoUnitarioMassaProducao(
+  ingredientes: Producao['ingredientes']
+): { valor: number; unidade: string } | null {
+  const entrada = totalEntradaIngredientes(ingredientes);
+  if (!entrada || entrada.total <= 0) return null;
+  return { valor: custoMassaProducao(ingredientes) / entrada.total, unidade: entrada.unidade };
+}
+
 export function custoEnergiaProducao(ingredientes: Producao['ingredientes']): number {
   return custoItensProducao(insumosEnergiaProducao(ingredientes));
 }
@@ -501,12 +511,34 @@ export function loteRateiaCusto(produtos: ProdutoGeradoProducao[]): boolean {
   return somarMesmaUnidade(produtos.map((p) => quantidadeParaRateio(p))) != null;
 }
 
+/**
+ * Há produto em peso que absorve a perda (Nibs e os demais).
+ * Lote só de Chá de Cacau não considera perda: o custo unitário não muda.
+ */
+export function loteConsideraPerda(produtos: ProdutoGeradoProducao[]): boolean {
+  const peso = produtos.filter((p) => quantidadeParaPerda(p) != null);
+  if (peso.length === 0) return false;
+  return peso.some((p) => !produtoMantemCustoSemPerda(p.nome));
+}
+
+function medidaDoProduto(
+  produto: ProdutoGeradoProducao,
+  medida?: (produto: ProdutoGeradoProducao) => { quantidade: number; unidade: string }
+): { quantidade: number; unidade: string } {
+  return medida ? medida(produto) : quantidadeParaRateio(produto);
+}
+
 /** Rateia o custo do lote. Em unidades, a quantidade é a unidade; no peso, a massa. */
 export function alocarCustoEntreProdutos(
   custoTotal: number,
-  produtos: ProdutoGeradoProducao[]
+  produtos: ProdutoGeradoProducao[],
+  opcoes?: {
+    ingredientes?: Producao['ingredientes'];
+    /** Base do rateio. A correção de venda usa a massa registrada. */
+    medida?: (produto: ProdutoGeradoProducao) => { quantidade: number; unidade: string };
+  }
 ): ProdutoGeradoProducao[] {
-  const partes = produtos.map((p) => quantidadeParaRateio(p));
+  const partes = produtos.map((p) => medidaDoProduto(p, opcoes?.medida));
   const saida = somarMesmaUnidade(partes);
   const totalQtd = saida?.total ?? 0;
 
@@ -514,10 +546,69 @@ export function alocarCustoEntreProdutos(
     return produtos.map((p) => ({ ...p, custoAlocado: 0 }));
   }
 
-  return produtos.map((p, idx) => ({
-    ...p,
-    custoAlocado: arredondarQuantidade((custoTotal * partes[idx].quantidade) / totalQtd),
-  }));
+  const proporcional = () =>
+    produtos.map((p, idx) => ({
+      ...p,
+      custoAlocado: arredondarQuantidade((custoTotal * partes[idx].quantidade) / totalQtd),
+    }));
+
+  const unitario = opcoes?.ingredientes
+    ? custoUnitarioMassaProducao(opcoes.ingredientes)
+    : null;
+  if (!unitario || unitario.valor < 0) return proporcional();
+
+  const mantemCusto = partes.map(
+    (parte, idx) =>
+      produtoMantemCustoSemPerda(produtos[idx].nome) &&
+      parte.quantidade > 0 &&
+      parte.unidade.toLowerCase() === unitario.unidade.toLowerCase()
+  );
+  if (!mantemCusto.some(Boolean)) return proporcional();
+
+  const custos = produtos.map(() => 0);
+  const idxsMantem = mantemCusto.flatMap((mantem, idx) => (mantem ? [idx] : []));
+  let somaMantem = 0;
+  for (const idx of idxsMantem) {
+    const valor = arredondarQuantidade(partes[idx].quantidade * unitario.valor);
+    custos[idx] = valor;
+    somaMantem = arredondarQuantidade(somaMantem + valor);
+  }
+
+  if (somaMantem > custoTotal) {
+    let acumulado = 0;
+    for (let k = 0; k < idxsMantem.length; k++) {
+      const idx = idxsMantem[k];
+      if (k === idxsMantem.length - 1) {
+        custos[idx] = arredondarQuantidade(Math.max(0, custoTotal - acumulado));
+      } else {
+        const parte = arredondarQuantidade((custos[idx] / somaMantem) * custoTotal);
+        custos[idx] = parte;
+        acumulado = arredondarQuantidade(acumulado + parte);
+      }
+    }
+  }
+
+  const idxsAbsorvem = mantemCusto.flatMap((mantem, idx) => (mantem ? [] : [idx]));
+  const totalAbsorve = idxsAbsorvem.reduce((acc, idx) => acc + partes[idx].quantidade, 0);
+  if (idxsAbsorvem.length === 0 || totalAbsorve <= 0) {
+    return produtos.map((p, idx) => ({ ...p, custoAlocado: custos[idx] }));
+  }
+
+  // O peso da casca faz parte da perda do Nibs: o valor do Nibs leva o custo
+  // inteiro do lote. O chá permanece com o custo da matéria-prima, à parte.
+  let acumulado = 0;
+  for (let k = 0; k < idxsAbsorvem.length; k++) {
+    const idx = idxsAbsorvem[k];
+    if (k === idxsAbsorvem.length - 1) {
+      custos[idx] = arredondarQuantidade(custoTotal - acumulado);
+    } else {
+      const parte = arredondarQuantidade((custoTotal * partes[idx].quantidade) / totalAbsorve);
+      custos[idx] = parte;
+      acumulado = arredondarQuantidade(acumulado + parte);
+    }
+  }
+
+  return produtos.map((p, idx) => ({ ...p, custoAlocado: custos[idx] }));
 }
 
 /** Espelha o 1º produto nos campos legados `produto`/`quantidade`/`unidade`. */
@@ -542,7 +633,9 @@ export function montarProducaoComProdutos(
     produtos: ProdutoGeradoProducao[];
   }
 ): Producao {
-  const produtos = alocarCustoEntreProdutos(base.custoEstimado, base.produtos);
+  const produtos = alocarCustoEntreProdutos(base.custoEstimado, base.produtos, {
+    ingredientes: base.ingredientes,
+  });
   const legado = espelharCamposLegadoProducao(produtos);
   return {
     ...base,
@@ -554,7 +647,12 @@ export function montarProducaoComProdutos(
 export interface PerdaProducao {
   entrada: number;
   unidade: string;
+  /** Peso que recebe a perda (Nibs e os demais). A casca não entra aqui. */
   saida: number;
+  /** Todo o peso gerado, inclusive a casca. */
+  saidaTotal: number;
+  /** Peso da casca ou do chá somado na perda do Nibs. */
+  pesoCasca: number;
   perdaQuantidade: number;
   perdaPercentual: number;
 }
@@ -576,11 +674,21 @@ export function calcularPerdaProducao(
     unidade: producao.unidade ?? 'kg',
     produtos: producao.produtos,
   });
-  const saidaInfo = totalSaidaPeso(produtos);
-  if (!saidaInfo) return null;
+  const peso = produtos.filter((p) => quantidadeParaPerda(p) != null);
+  const absorvem = peso.filter((p) => !produtoMantemCustoSemPerda(p.nome));
+  const cascas = absorvem.length > 0 ? peso.filter((p) => produtoMantemCustoSemPerda(p.nome)) : [];
+  const basePerda = absorvem.length > 0 ? absorvem : peso;
+  const saidaInfo = totalSaidaPeso(basePerda);
+  const saidaToda = totalSaidaPeso(peso);
+  if (!saidaInfo || !saidaToda) return null;
   if (saidaInfo.unidade.toLowerCase() !== entradaInfo.unidade.toLowerCase()) return null;
+  if (saidaToda.unidade.toLowerCase() !== entradaInfo.unidade.toLowerCase()) return null;
 
   const saida = arredondarQuantidade(saidaInfo.total);
+  const saidaTotal = arredondarQuantidade(saidaToda.total);
+  const pesoCasca = arredondarQuantidade(
+    cascas.reduce((acc, p) => acc + (quantidadeParaPerda(p)?.quantidade ?? 0), 0)
+  );
   const perdaQuantidade = arredondarQuantidade(Math.max(0, entradaInfo.total - saida));
   const perdaPercentual =
     entradaInfo.total > 0
@@ -591,6 +699,8 @@ export function calcularPerdaProducao(
     entrada: entradaInfo.total,
     unidade: entradaInfo.unidade,
     saida,
+    saidaTotal,
+    pesoCasca,
     perdaQuantidade,
     perdaPercentual,
   };
@@ -712,7 +822,13 @@ export function totalizarPerdasPorProduto(producoes: Producao[]): TotalPerdaProd
     const perda = calcularPerdaProducao(p);
     if (!perda || perda.perdaQuantidade <= 0) continue;
 
-    const rotulo = rotuloProdutosProducao(p);
+    if (!loteConsideraPerda(produtosDaProducao(p))) continue;
+
+    const queAbsorvem = produtosDaProducao(p).filter((prod) => !produtoMantemCustoSemPerda(prod.nome));
+    const rotulo =
+      queAbsorvem.length > 0
+        ? queAbsorvem.map((prod) => prod.nome).join(' + ')
+        : rotuloProdutosProducao(p);
     const key = `${rotulo.toLowerCase()}|${perda.unidade.toLowerCase()}`;
     const existing = map.get(key);
 
@@ -767,9 +883,9 @@ export function custoUltimaProducaoDoProduto(
       const custo =
         prod.custoAlocado !== undefined && prod.custoAlocado !== null
           ? prod.custoAlocado
-          : (alocarCustoEntreProdutos(p.custoEstimado, produtosDaProducao(p)).find(
-              (item) => item.nome.toLowerCase() === key
-            )?.custoAlocado ?? 0);
+          : (alocarCustoEntreProdutos(p.custoEstimado, produtosDaProducao(p), {
+              ingredientes: p.ingredientes,
+            }).find((item) => item.nome.toLowerCase() === key)?.custoAlocado ?? 0);
       return {
         data: p.data,
         id: p.id,

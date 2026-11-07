@@ -8,6 +8,7 @@ import {
   baixarEstoqueFifo,
   calcularPerdaProducao,
   espelharCamposLegadoProducao,
+  loteConsideraPerda,
   produtosDaProducao,
   resolverTipoIngredienteProducao,
 } from './estoque';
@@ -179,7 +180,9 @@ function normalizeProdutosGerados(
   });
 
   if (base.length === 0) return [];
-  return alocarCustoEntreProdutos(custoEstimado, base);
+  return alocarCustoEntreProdutos(custoEstimado, base, {
+    ingredientes: Array.isArray(item.ingredientes) ? item.ingredientes : [],
+  });
 }
 
 function normalizeProducoes(items: unknown[]): Producao[] {
@@ -220,6 +223,9 @@ function normalizeProducoes(items: unknown[]): Producao[] {
     };
   })
     .map((p) => {
+      if (!loteConsideraPerda(produtosDaProducao(p))) {
+        return { ...p, quantidadePerdida: undefined, percentualPerda: undefined };
+      }
       const calculada = calcularPerdaProducao(p);
       if (!calculada) return p;
       return {

@@ -16,7 +16,7 @@ export const CADEIA_PRODUCAO_CACAU: EtapaCadeia[] = [
     ingredientesSugeridos: ['Amêndoa Torrada'],
   },
   {
-    produto: 'Casca',
+    produto: 'Chá de Cacau',
     ingredientesSugeridos: ['Amêndoa Torrada'],
   },
   {
@@ -39,8 +39,8 @@ export const CADEIA_PRODUCAO_CACAU: EtapaCadeia[] = [
 
 /** Co-produtos gerados no mesmo lote a partir de um ingrediente. */
 export const COPRODUTOS_POR_INGREDIENTE: Record<string, string[]> = {
-  'amêndoa torrada': ['Nibs', 'Casca'],
-  'amendoa torrada': ['Nibs', 'Casca'],
+  'amêndoa torrada': ['Nibs', 'Chá de Cacau'],
+  'amendoa torrada': ['Nibs', 'Chá de Cacau'],
 };
 
 export function etapaCadeia(produto: string): EtapaCadeia | undefined {
@@ -64,6 +64,17 @@ function normalizarNomeItem(nome: string): string {
     .toLowerCase()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '');
+}
+
+/**
+ * O Chá de Cacau (e o nome antigo Casca) não absorve a perda no próprio custo.
+ * O peso dessa casca entra na perda usada para calcular o valor do Nibs.
+ */
+export function produtoMantemCustoSemPerda(nome: string): boolean {
+  const key = normalizarNomeItem(nome);
+  if (!key) return false;
+  if (key === 'casca' || key === 'cha de cacau') return true;
+  return key.includes('cha de cacau');
 }
 
 const ALIASES_ENERGIA = new Set([
@@ -183,9 +194,9 @@ export interface LinhaProdutoSaida {
 }
 
 /**
- * Se o insumo sugere co-produtos (Amêndoa Torrada → Nibs + Casca), preenche linhas
- * vazias já existentes — sem abrir linhas extras nem sobrescrever o que o usuário digitou.
- * Um produto gerado basta; o segundo só entra se o usuário adicionar a linha.
+ * Se o insumo sugere co-produtos (Amêndoa Torrada → Nibs + Chá de Cacau), preenche
+ * linhas vazias já existentes — sem abrir linhas extras nem sobrescrever o que o usuário digitou.
+ * Um produto gerado basta; o Chá de Cacau só entra na linha que o usuário adicionar.
  */
 export function preencherProdutosComCoprodutos<T extends LinhaProdutoSaida>(
   atuais: T[],
@@ -197,15 +208,19 @@ export function preencherProdutosComCoprodutos<T extends LinhaProdutoSaida>(
   const sugeridos = coprodutosSugeridosParaIngredientes(nomesIngredientes);
   if (sugeridos.length === 0) return linhas;
 
-  const comNome = linhas.filter((p) => p.nome.trim());
-  if (comNome.length > 0) return linhas;
+  const usados = new Set(linhas.map((p) => p.nome.trim().toLowerCase()).filter(Boolean));
+  const restantes = sugeridos.filter((nome) => !usados.has(nome.toLowerCase()));
+  if (restantes.length === 0) return linhas;
 
-  return linhas.map(
-    (linha, idx) =>
-      ({
-        ...linha,
-        nome: sugeridos[idx] ?? linha.nome,
-        unidade: linha.unidade || unidade,
-      }) as T
-  );
+  let cursor = 0;
+  return linhas.map((linha) => {
+    if (linha.nome.trim() || cursor >= restantes.length) return linha;
+    const nome = restantes[cursor];
+    cursor += 1;
+    return {
+      ...linha,
+      nome,
+      unidade: linha.unidade || unidade,
+    } as T;
+  });
 }

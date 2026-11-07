@@ -122,7 +122,7 @@ export interface Producao {
   produto: string;
   quantidade: number;
   unidade: string;
-  /** Um ou mais produtos gerados no mesmo lote (ex.: Nibs + Casca a partir de Amêndoa Torrada). */
+  /** Um ou mais produtos gerados no mesmo lote (ex.: Nibs + Chá de Cacau a partir de Amêndoa Torrada). */
   produtos: ProdutoGeradoProducao[];
   ingredientes: Array<{
     nome: string;

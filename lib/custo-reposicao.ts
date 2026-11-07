@@ -1,3 +1,5 @@
+import { produtoMantemCustoSemPerda } from './cadeia-producao';
+import { alocarCustoEntreProdutos } from './estoque';
 import { arredondarQuantidade } from './format';
 import { massaRegistrada } from './fracionar-massa';
 import type {
@@ -135,8 +137,16 @@ export function custoParaReporEstoque(
 
 function alocarCusto(
   custoTotal: number,
-  produtos: ProdutoGeradoProducao[]
+  produtos: ProdutoGeradoProducao[],
+  ingredientes: Producao['ingredientes']
 ): ProdutoGeradoProducao[] {
+  if (produtos.some((produto) => produtoMantemCustoSemPerda(produto.nome))) {
+    return alocarCustoEntreProdutos(custoTotal, produtos, {
+      ingredientes,
+      medida: massaRegistrada,
+    });
+  }
+
   const partes = produtos.map((produto) => massaRegistrada(produto));
   if (partes.length === 0) return produtos;
   const unidade = partes[0].unidade || 'kg';
@@ -192,7 +202,7 @@ export function corrigirCustosDevolvidosComoPreco(data: AppData): AppData {
 
     const custoEstimado = ingredientes.reduce((acc, ing) => acc + ing.quantidade * ing.valorUnit, 0);
     const produtosAntigos = producao.produtos ?? [];
-    const produtos = alocarCusto(custoEstimado, produtosAntigos);
+    const produtos = alocarCusto(custoEstimado, produtosAntigos, ingredientes);
     produtosAntigos.forEach((antigo, idx) => {
       const novo = produtos[idx];
       if (!antigo || !novo || antigo.quantidade <= 0) return;

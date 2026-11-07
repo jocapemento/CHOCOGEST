@@ -68,6 +68,7 @@ import {
   coprodutosSugeridosParaIngredientes,
   ingredientesSugeridosPara,
   preencherProdutosComCoprodutos,
+  produtoMantemCustoSemPerda,
   produtosDaCadeia,
   tipoCadeiaFixo,
   tipoEstoqueCadeia,
@@ -85,6 +86,8 @@ import {
   custoEmbalagemProducao,
   custoEnergiaProducao,
   custoMassaProducao,
+  custoUnitarioMassaProducao,
+  loteConsideraPerda,
   filtrarLancamentosEmbalagem,
   filtrarLancamentosEnergia,
   filtrarLancamentosMateriaPrima,
@@ -612,7 +615,9 @@ function ingredientesProducaoParaItens(
 }
 
 function produtosProducaoParaItens(producao: Producao): ItemMovimentacao[] {
-  const produtos = alocarCustoEntreProdutos(producao.custoEstimado, produtosDaProducao(producao));
+  const produtos = alocarCustoEntreProdutos(producao.custoEstimado, produtosDaProducao(producao), {
+    ingredientes: producao.ingredientes,
+  });
   return produtos.map((p) => ({
     id: 0,
     nome: p.nome,
@@ -1286,6 +1291,22 @@ export default function ChocoGest() {
   );
   const custoEmbalagemForm = useMemo(
     () => custoEmbalagemProducao(novaProducao.ingredientes),
+    [novaProducao.ingredientes]
+  );
+  const custosSaidaForm = useMemo(() => {
+    const produtos = novaProducao.produtos
+      .filter((p) => p.nome.trim() && p.quantidade > 0)
+      .map((p) => ({
+        nome: p.nome.trim(),
+        quantidade: p.quantidade,
+        unidade: produtoFormEmUnidade(p) ? UNIDADE_FRACIONADA : (p.unidade || 'kg').trim() || 'kg',
+      }));
+    if (!produtos.some((p) => produtoMantemCustoSemPerda(p.nome))) return [];
+    const custo = custoMassaForm + custoGasForm + custoEmbalagemForm;
+    return alocarCustoEntreProdutos(custo, produtos, { ingredientes: novaProducao.ingredientes });
+  }, [novaProducao.produtos, novaProducao.ingredientes, custoMassaForm, custoGasForm, custoEmbalagemForm]);
+  const custoMassaUnitarioForm = useMemo(
+    () => custoUnitarioMassaProducao(novaProducao.ingredientes),
     [novaProducao.ingredientes]
   );
 
@@ -2053,20 +2074,25 @@ export default function ChocoGest() {
   };
 
   const adicionarProdutoSaida = () => {
-    setNovaProducao((p) => ({
-      ...p,
-      produtos: [
-        ...p.produtos,
-        {
-          ...PRODUTO_SAIDA_INICIAL,
-          unidade:
-            p.produtos[0]?.unidade ||
-            ingredientesMassaProducao(p.ingredientes)[0]?.unidade ||
-            'kg',
-          fracionar: p.produtos[0]?.fracionar ?? false,
-        },
-      ],
-    }));
+    setNovaProducao((p) => {
+      const unidade =
+        p.produtos[0]?.unidade ||
+        ingredientesMassaProducao(p.ingredientes)[0]?.unidade ||
+        'kg';
+      const linha: ProdutoSaidaForm = {
+        ...PRODUTO_SAIDA_INICIAL,
+        unidade,
+        fracionar: p.produtos[0]?.fracionar ?? false,
+      };
+      return {
+        ...p,
+        produtos: preencherProdutosComCoprodutos(
+          [...p.produtos, linha],
+          ingredientesMassaProducao(p.ingredientes).map((ing) => ing.nome),
+          unidade
+        ),
+      };
+    });
   };
 
   const removerProdutoSaida = (idx: number) => {
@@ -2229,9 +2255,9 @@ export default function ChocoGest() {
         );
       }
     }
-    if (perdaCalculada && perdaCalculada.saida > perdaCalculada.entrada) {
+    if (perdaCalculada && perdaCalculada.saidaTotal > perdaCalculada.entrada) {
       return alert(
-        `A quantidade produzida (${perdaCalculada.saida} ${perdaCalculada.unidade}) não pode ser maior que a matéria-prima lançada (${perdaCalculada.entrada} ${perdaCalculada.unidade}).`
+        `A quantidade produzida (${perdaCalculada.saidaTotal} ${perdaCalculada.unidade}) não pode ser maior que a matéria-prima lançada (${perdaCalculada.entrada} ${perdaCalculada.unidade}).`
       );
     }
     for (const p of produtosMassa) {
@@ -2265,7 +2291,7 @@ export default function ChocoGest() {
       produtos: produtosPreenchidos,
       ingredientes: novaProducao.ingredientes,
       custoEstimado,
-      ...(perdaCalculada
+      ...(perdaCalculada && loteConsideraPerda(produtosPreenchidos)
         ? {
             quantidadePerdida: perdaCalculada.perdaQuantidade,
             percentualPerda: perdaCalculada.perdaPercentual,
@@ -3357,7 +3383,7 @@ export default function ChocoGest() {
                 </div>
                 <p className="text-amber-400/70 text-xs mt-2">
                   Cada inclusão gera um lançamento na lista. O saldo disponível é a soma dos lançamentos por item.
-                  Amêndoa Torrada entra como matéria-prima e aparece em Matérias-primas; na produção gera Nibs e Casca.
+                  Amêndoa Torrada entra como matéria-prima e aparece em Matérias-primas; na produção gera Nibs e Chá de Cacau.
                   Gás de Cozinha entra como Energia e aparece em Gás de cozinha; na produção entra no custo do lote.
                   Embalagem (caixa, rótulo, filme) entra como Embalagem e também entra no custo do lote, sem afetar a perda de massa.
                   {estoqueEditandoId !== null && ' Use Editar na tabela abaixo para corrigir quantidades de lançamentos existentes.'}
@@ -4800,7 +4826,7 @@ export default function ChocoGest() {
                 <div className="mb-4 p-3 rounded-lg bg-amber-950/40 border border-amber-800/50 text-sm text-amber-300/90">
                   <p className="font-medium text-amber-200 mb-1">Cadeia produtiva do cacau</p>
                   <p className="text-xs leading-relaxed">
-                    Amendoa de Cacau → Amêndoa Torrada → Nibs + Casca → Licor de Cacau
+                    Amendoa de Cacau → Amêndoa Torrada → Nibs + Chá de Cacau → Licor de Cacau
                     {' → '}outros chocolates (com ingredientes adicionais)
                   </p>
                 </div>
@@ -4808,7 +4834,8 @@ export default function ChocoGest() {
                 <h4 className="text-amber-200 mb-2">1. Ingredientes (entrada)</h4>
                 <p className="text-amber-400/70 text-xs mb-3">
                   Use matérias-primas (ex.: Amêndoa Torrada) ou produtos intermediários já produzidos.
-                  Um produto gerado já basta; Nibs e Casca podem ir no mesmo lote se você adicionar os dois.
+                  Um produto gerado já basta; Nibs e Chá de Cacau podem ir no mesmo lote se você adicionar os dois.
+                  A perda usada no valor do Nibs inclui o peso da casca. O Chá de Cacau permanece com o mesmo custo da matéria-prima.
                   O <strong>gás de cozinha</strong> e a <strong>embalagem</strong> também podem ser lançados: entram no custo do lote e são baixados do estoque, sem afetar o cálculo de perda.
                 </p>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
@@ -5084,6 +5111,15 @@ export default function ChocoGest() {
                   </p>
                 )}
                 {resumoPerdaProducao &&
+                  loteConsideraPerda(
+                    novaProducao.produtos
+                      .filter((p) => p.nome.trim() && p.quantidade > 0)
+                      .map((p) => ({
+                        nome: p.nome.trim(),
+                        quantidade: p.quantidade,
+                        unidade: produtoFormEmUnidade(p) ? UNIDADE_FRACIONADA : (p.unidade || 'kg').trim() || 'kg',
+                      }))
+                  ) &&
                   novaProducao.produtos.some((p) => p.quantidade > 0 && !p.fracionar) && (
                   <p className="text-sm text-amber-300/90 mb-4 bg-amber-950/40 border border-amber-800/50 rounded-lg px-3 py-2">
                     Entrada: <strong>{formatQuantidadeUnidade(resumoPerdaProducao.entrada, resumoPerdaProducao.unidade)}</strong>
@@ -5095,6 +5131,36 @@ export default function ChocoGest() {
                     {novaProducao.produtos.some((p) => p.fracionar) && (
                       <span className="block text-xs text-amber-400/80 mt-1">
                         Produtos em unidades ficam de fora dessa perda de peso.
+                      </span>
+                    )}
+                    {resumoPerdaProducao.pesoCasca > 0 && (
+                      <span className="block text-xs text-amber-400/80 mt-1">
+                        Inclui {formatQuantidadeUnidade(resumoPerdaProducao.pesoCasca, resumoPerdaProducao.unidade)} de casca no cálculo do valor do Nibs.
+                      </span>
+                    )}
+                  </p>
+                )}
+                {custosSaidaForm.length > 0 && (
+                  <p className="text-sm text-amber-300/90 mb-4 bg-amber-950/40 border border-amber-800/50 rounded-lg px-3 py-2">
+                    {custosSaidaForm.map((prod) => {
+                      const unitario = prod.quantidade > 0 ? (prod.custoAlocado ?? 0) / prod.quantidade : 0;
+                      const mantem = produtoMantemCustoSemPerda(prod.nome);
+                      return (
+                        <span key={prod.nome} className="block">
+                          <strong>{prod.nome}</strong>
+                          {': '}
+                          {formatCurrency(unitario)}/{prod.unidade}
+                          {mantem
+                            ? ' — mesmo custo da matéria-prima, sem a perda'
+                            : resumoPerdaProducao?.pesoCasca
+                              ? ' — inclui a perda e o peso da casca'
+                              : ' — inclui a perda'}
+                        </span>
+                      );
+                    })}
+                    {custoMassaUnitarioForm && (
+                      <span className="block text-xs text-amber-400/80 mt-1">
+                        Matéria-prima: {formatCurrency(custoMassaUnitarioForm.valor)}/{custoMassaUnitarioForm.unidade}.
                       </span>
                     )}
                   </p>
@@ -5157,6 +5223,17 @@ export default function ChocoGest() {
                           </td>
                           <td className="py-2 text-right">
                             {formatCurrency(p.custoEstimado)}
+                            {produtosDaProducao(p).length > 1 && (
+                              <span className="block text-xs text-amber-400/70 font-normal">
+                                {produtosDaProducao(p)
+                                  .map((prod) => {
+                                    const unitario =
+                                      prod.quantidade > 0 ? (prod.custoAlocado ?? 0) / prod.quantidade : 0;
+                                    return `${prod.nome} ${formatCurrency(unitario)}`;
+                                  })
+                                  .join(' · ')}
+                              </span>
+                            )}
                             {custoEnergiaProducao(p.ingredientes) > 0 && (
                               <span className="block text-xs text-amber-400/60">
                                 incl. {formatCurrency(custoEnergiaProducao(p.ingredientes))} de gás
