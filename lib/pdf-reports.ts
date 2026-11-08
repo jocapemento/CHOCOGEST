@@ -17,6 +17,7 @@ import {
   recebimentoDaCompra,
   resumoComprasAguardandoRecebimento,
 } from './compras';
+import { demonstrarLucroVendas, formatarMargemLucro } from './lucro-vendas';
 import { totalizarProdutosPrecificados } from './precificacao';
 import {
   ENTREGA_VENDA_LABEL,
@@ -424,6 +425,7 @@ export function gerarPdfDashboard(data: AppData) {
     data.producoes,
     data.precosGerados
   );
+  const lucroReal = demonstrarLucroVendas(data);
 
   autoTable(doc, {
     startY: 52,
@@ -446,6 +448,13 @@ export function gerarPdfDashboard(data: AppData) {
           : 'nenhuma',
       ],
       ['Total de vendas', formatCurrency(totalVendas)],
+      ['Receita das vendas', formatCurrency(lucroReal.receita)],
+      ['Custo das vendas', formatCurrency(lucroReal.custo)],
+      ['Lucro real das vendas', formatCurrency(lucroReal.lucro)],
+      ['Margem real', formatarMargemLucro(lucroReal.margem)],
+      ...(lucroReal.receitaSemCusto > 0
+        ? [['Receita sem custo conhecido', formatCurrency(lucroReal.receitaSemCusto)] as [string, string]]
+        : []),
       ['Saldo em caixa', formatCurrency(saldoCaixa)],
       ['Saldo em banco', formatCurrency(saldoBanco)],
       ['Empréstimos (saldo em aberto)', formatCurrency(saldoEmprestimos)],
@@ -456,6 +465,40 @@ export function gerarPdfDashboard(data: AppData) {
     theme: 'grid',
     headStyles: { fillColor: [180, 83, 9] },
   });
+
+  if (lucroReal.itens.length > 0) {
+    const lucroRows = lucroReal.itens.map((item) => [
+      item.semCusto ? `${item.nome} (sem custo)` : item.nome,
+      formatQuantidadeUnidade(item.quantidade, item.unidade),
+      formatCurrency(item.receita),
+      formatCurrency(item.custo),
+      formatCurrency(item.lucro),
+    ]);
+    const depoisIndicadores = (doc as jsPDF & { lastAutoTable?: { finalY: number } }).lastAutoTable;
+    const yLucro = (depoisIndicadores?.finalY ?? 52) + 10;
+
+    doc.setFontSize(11);
+    doc.setTextColor(120, 53, 15);
+    doc.text('Lucro real das vendas', 14, yLucro);
+
+    autoTable(doc, {
+      startY: yLucro + 4,
+      head: [['Produto', 'Qtd', 'Receita', 'Custo', 'Lucro']],
+      body: lucroRows,
+      foot: [
+        [
+          'Total',
+          '',
+          formatCurrency(lucroReal.receita),
+          formatCurrency(lucroReal.custo),
+          formatCurrency(lucroReal.lucro),
+        ],
+      ],
+      theme: 'grid',
+      headStyles: { fillColor: [180, 83, 9] },
+      footStyles: { fillColor: [254, 243, 199], textColor: [60, 40, 30], fontStyle: 'bold' },
+    });
+  }
 
   if (resumoPreco.itens.length > 0) {
     const precificacaoRows = resumoPreco.itens.map((item) => [

@@ -122,6 +122,7 @@ import {
   precoUnitarioParaVenda,
   totalizarProdutosPrecificados,
 } from '@/lib/precificacao';
+import { demonstrarLucroVendas, formatarMargemLucro } from '@/lib/lucro-vendas';
 import {
   ENTREGA_VENDA_LABEL,
   ENTREGA_VENDA_OPCOES,
@@ -2784,6 +2785,17 @@ export default function ChocoGest() {
     () => totalizarProdutosPrecificados(data.estoque, data.producoes, data.precosGerados),
     [data.estoque, data.producoes, data.precosGerados]
   );
+  const lucroRealVendas = useMemo(
+    () =>
+      demonstrarLucroVendas({
+        vendas: data.vendas,
+        producoes: data.producoes,
+        compras: data.compras,
+        precosGerados: data.precosGerados,
+        estoque: data.estoque,
+      }),
+    [data.vendas, data.producoes, data.compras, data.precosGerados, data.estoque]
+  );
 
   const rankingClientes = useMemo(() => rankingMelhoresClientes(data.vendas), [data.vendas]);
   const sugestoesClientes = useMemo(
@@ -3049,6 +3061,167 @@ export default function ChocoGest() {
                   </Card>
                 ))}
               </div>
+
+              <Card className="mb-8">
+                <div id="lucro-real-vendas">
+                  <h3 className="font-semibold text-amber-200 mb-1">Lucro real das vendas</h3>
+                  <p className="text-amber-400/70 text-xs mb-4">
+                    Vendas com entrega e pagamento confirmados. A receita já desconta o desconto.
+                    O custo é a média da produção, com perda, gás e embalagem. Compra do mesmo
+                    produto entra nessa média. Sem produção, vale a compra e, por último, o custo
+                    da precificação.
+                  </p>
+                  {lucroRealVendas.vendas === 0 ? (
+                    <p className="text-amber-400/60 text-sm">
+                      Nenhuma venda concluída ainda. O lucro real aparece quando a entrega e o
+                      pagamento estão confirmados.
+                    </p>
+                  ) : (
+                    <>
+                      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+                        <div>
+                          <div className="text-amber-400/70 text-xs">Receita</div>
+                          <div className="text-lg font-bold text-amber-50 tabular-nums">
+                            {formatCurrency(lucroRealVendas.receita)}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-amber-400/70 text-xs">Custo</div>
+                          <div className="text-lg font-bold text-amber-50 tabular-nums">
+                            {formatCurrency(lucroRealVendas.custo)}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-amber-400/70 text-xs">Lucro real</div>
+                          <div
+                            className={`text-lg font-bold tabular-nums ${
+                              lucroRealVendas.lucro > 0
+                                ? 'text-emerald-300'
+                                : lucroRealVendas.lucro < 0
+                                  ? 'text-red-300'
+                                  : 'text-amber-50'
+                            }`}
+                          >
+                            {formatCurrency(lucroRealVendas.lucro)}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-amber-400/70 text-xs">Margem</div>
+                          <div
+                            className={`text-lg font-bold tabular-nums ${
+                              lucroRealVendas.margem != null && lucroRealVendas.margem < 0
+                                ? 'text-red-300'
+                                : 'text-amber-50'
+                            }`}
+                          >
+                            {formatarMargemLucro(lucroRealVendas.margem)}
+                          </div>
+                        </div>
+                      </div>
+                      <p className="text-xs text-amber-400/70 mb-3">
+                        {lucroRealVendas.vendas === 1
+                          ? '1 venda concluída'
+                          : `${lucroRealVendas.vendas} vendas concluídas`}
+                      </p>
+                      {lucroRealVendas.itens.length > 0 && (
+                        <div className="quadro-fit">
+                          <div className="quadro-fit-corpo">
+                            <table className="w-full text-sm">
+                              <colgroup>
+                                <col style={{ width: '28%' }} />
+                                <col style={{ width: '16%' }} />
+                                <col style={{ width: '18%' }} />
+                                <col style={{ width: '18%' }} />
+                                <col style={{ width: '20%' }} />
+                              </colgroup>
+                              <thead>
+                                <tr className="text-amber-300 border-b border-amber-700">
+                                  <th className="text-left py-2 pr-1">Produto</th>
+                                  <th className="text-right py-2 px-0.5">Qtd</th>
+                                  <th className="text-right py-2 px-0.5">Receita</th>
+                                  <th className="text-right py-2 px-0.5">Custo</th>
+                                  <th className="text-right py-2 pl-0.5">Lucro</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {lucroRealVendas.itens.map((item) => (
+                                  <tr
+                                    key={`${item.nome}-${item.unidade}`}
+                                    className="border-b border-amber-800/30"
+                                  >
+                                    <td className="py-2 pr-1 quadro-titulo" data-label="Produto">
+                                      {item.nome}
+                                      {item.semCusto && (
+                                        <span className="block text-xs font-normal text-amber-400/70">
+                                          sem custo conhecido
+                                        </span>
+                                      )}
+                                    </td>
+                                    <td className="py-2 px-0.5 text-right tabular-nums" data-label="Qtd">
+                                      {formatQuantidadeUnidade(item.quantidade, item.unidade)}
+                                    </td>
+                                    <td className="py-2 px-0.5 text-right tabular-nums" data-label="Receita">
+                                      {formatCurrency(item.receita)}
+                                    </td>
+                                    <td className="py-2 px-0.5 text-right tabular-nums" data-label="Custo">
+                                      {formatCurrency(item.custo)}
+                                    </td>
+                                    <td
+                                      className={`py-2 pl-0.5 text-right tabular-nums ${
+                                        item.lucro > 0
+                                          ? 'text-emerald-300'
+                                          : item.lucro < 0
+                                            ? 'text-red-300'
+                                            : 'text-amber-100'
+                                      }`}
+                                      data-label="Lucro"
+                                    >
+                                      {formatCurrency(item.lucro)}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                              <tfoot>
+                                <tr className="font-bold text-amber-100 border-t border-amber-700">
+                                  <td className="py-3 pr-1 quadro-titulo" data-label="Total">
+                                    Total
+                                  </td>
+                                  <td className="quadro-vazio py-3" />
+                                  <td className="py-3 px-0.5 text-right tabular-nums" data-label="Receita">
+                                    {formatCurrency(lucroRealVendas.receita)}
+                                  </td>
+                                  <td className="py-3 px-0.5 text-right tabular-nums" data-label="Custo">
+                                    {formatCurrency(lucroRealVendas.custo)}
+                                  </td>
+                                  <td
+                                    className={`py-3 pl-0.5 text-right tabular-nums ${
+                                      lucroRealVendas.lucro > 0
+                                        ? 'text-emerald-300'
+                                        : lucroRealVendas.lucro < 0
+                                          ? 'text-red-300'
+                                          : 'text-amber-100'
+                                    }`}
+                                    data-label="Lucro"
+                                  >
+                                    {formatCurrency(lucroRealVendas.lucro)}
+                                  </td>
+                                </tr>
+                              </tfoot>
+                            </table>
+                          </div>
+                        </div>
+                      )}
+                      {lucroRealVendas.receitaSemCusto > 0 && (
+                        <p className="text-amber-400/70 text-xs mt-3">
+                          {formatCurrency(lucroRealVendas.receitaSemCusto)} em vendas sem custo de
+                          produção, compra ou precificação. Esse valor entra inteiro no lucro real.
+                        </p>
+                      )}
+                    </>
+                  )}
+                </div>
+              </Card>
+
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
                 <Card>
                   <h3 className="font-semibold text-amber-200 mb-3">Matérias-primas em estoque</h3>
